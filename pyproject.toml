@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "beancount-plugins"
+version = "0.1.0"
+description = "Custom Beancount plugins for transfer matching and validation"
+readme = "README.md"
+requires-python = ">=3.13"
+license = {text = "GNU GPLv2"}
+authors = [
+    {name = "slimslickner"}
+]
+repository = "https://github.com/slimslickner/beancount-plugins"
+keywords = ["beancount", "finance", "accounting", "plugins"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial",
+]
+dependencies = [
+    "beancount>=3.2.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["beancount_plugins*"]
