@@ -12,7 +12,6 @@ license = {text = "GNU GPLv2"}
 authors = [
     {name = "slimslickner"}
 ]
-repository = "https://github.com/slimslickner/beancount-plugins"
 keywords = ["beancount", "finance", "accounting", "plugins"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -26,6 +25,9 @@ classifiers = [
 dependencies = [
     "beancount>=3.2.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/slimslickner/beancount-plugins"
 
 [tool.setuptools.packages.find]
 where = ["."]
