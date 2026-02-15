@@ -10,7 +10,7 @@ WHAT IT DOES:
 - Matches transfers across ZeroSum links (created by the zerosum plugin)
 - Matches direct transfers within the same transaction
 - Adds metadata to track counterparty information
-- Generates descriptive transfer narrations (e.g., "Transfer from Checking to Savings")
+- Adds descriptive narration as posting metadata (e.g., "Transfer from Checking to Savings")
 
 USAGE:
 In your main ledger file:
@@ -33,12 +33,15 @@ The plugin adds the following metadata to Equity:ZeroSum postings:
     source_account: The source Assets/Liabilities account
     matched_transfer_account: The matched counterparty account
     matched_transfer_date: Date of the transfer
+    narration: Human-readable transfer description (e.g., "Transfer from Checking to Savings")
+               If existing narration metadata is present, it's appended in parentheses
 
 Example on a transfer from Checking to Savings:
     Equity:ZeroSum:Transfers 500 USD
         source_account: "Assets:Banking:Checking:My-Checking"
         matched_transfer_account: "Assets:Savings:My-Savings"
         matched_transfer_date: "2026-02-05"
+        narration: "Transfer from My-Checking to My-Savings"
 
 PERFORMANCE:
 O(n) where n = number of transactions (single index-building pass)
@@ -286,34 +289,42 @@ def zerosum_transaction_matcher(
 
         # Second pass: add metadata to Equity:ZeroSum postings
         # For transactions with multiple Equity:ZeroSum postings (split transfers),
-        # match each Equity posting to its corresponding Liabilities posting using
-        # the match_id to look up the correct counterparty in the zerosum_index
+        # match each Equity posting to its corresponding counterparty using
+        # the match_id to look up the correct account in the zerosum_index
         for posting in entry.postings:
             # If this is a ZeroSum equity posting, add metadata from matched transfer
             if posting.account and posting.account.startswith("Equity:ZeroSum"):
                 matched_account = None
+                matched_date = None
                 source_account = None
 
-                # Strategy 1: Use match_id to find correct Liabilities posting
+                # Find the source Assets/Liabilities posting in THIS transaction
+                for src_posting in entry.postings:
+                    if _is_transfer_posting(src_posting):
+                        source_account = src_posting.account
+                        break
+
+                # Strategy 1: Use match_id to find counterparty from OTHER transaction
                 # Each Equity:ZeroSum posting has a match_id that corresponds to
                 # a ZeroSum link. Look up that link in zerosum_index to find the
-                # specific Liabilities account this posting corresponds to.
+                # counterparty account from the matched transaction.
                 if posting.meta and "match_id" in posting.meta:
                     match_id = posting.meta["match_id"]
                     link_key = f"ZeroSum.{match_id}"
                     if link_key in zerosum_index:
                         candidates = zerosum_index[link_key]
-                        # Find the Liabilities account in candidates
-                        # (there should be one Liabilities account per match_id)
+                        # Find the account that's NOT the source account
+                        # (i.e., the account from the OTHER transaction)
                         for candidate in candidates:
-                            if candidate["account"].startswith("Liabilities"):
+                            if candidate["account"] != source_account:
                                 matched_account = candidate["account"]
+                                matched_date = candidate["date"]
                                 logger.debug(
                                     f"Match by ID: {posting.account} -> {matched_account} (link: {link_key})"
                                 )
                                 break
 
-                # Strategy 2: Fallback to first Assets posting if no match_id
+                # Strategy 2: Fallback to direct transfer match if no match_id
                 if not matched_account:
                     for transfer_posting in entry.postings:
                         if (
@@ -321,22 +332,33 @@ def zerosum_transaction_matcher(
                             and transfer_posting.account in transfer_matches
                         ):
                             matched_account = transfer_matches[transfer_posting.account]
+                            matched_date = entry.date
                             logger.debug(
                                 f"Fallback match: {posting.account} -> {matched_account}"
                             )
                             break
 
-                # Find the source Assets posting
-                for src_posting in entry.postings:
-                    if src_posting.account and src_posting.account.startswith("Assets"):
-                        source_account = src_posting.account
-                        break
-
-                if matched_account:
+                if matched_account and source_account:
                     new_meta = dict(posting.meta) if posting.meta else {}
+
+                    # Preserve existing narration metadata if present
+                    existing_narration = new_meta.get("narration")
+
                     new_meta["source_account"] = source_account
                     new_meta["matched_transfer_account"] = matched_account
-                    new_meta["matched_transfer_date"] = str(entry.date)
+                    new_meta["matched_transfer_date"] = str(matched_date) if matched_date else str(entry.date)
+
+                    # Generate narration for this posting and add as metadata
+                    source_amount = transfer_amounts.get(source_account)
+                    if source_amount is not None:
+                        narration = _generate_transfer_narration(
+                            source_account, matched_account, source_amount
+                        )
+                        # If there was existing narration, append it in parentheses
+                        if existing_narration:
+                            narration = f"{narration} ({existing_narration})"
+                        new_meta["narration"] = narration
+
                     new_posting = posting._replace(meta=new_meta if new_meta else None)
                     new_postings.append(new_posting)
                 else:
@@ -345,20 +367,8 @@ def zerosum_transaction_matcher(
                 # Non-ZeroSum postings pass through unchanged
                 new_postings.append(posting)
 
-        # Generate new narration if there are matched transfers
-        new_narration = entry.narration
-        if transfer_matches:
-            # Use the first matched transfer to generate narration
-            first_matched = next(iter(transfer_matches.items()))
-            source_account, matched_account = first_matched
-            source_amount = transfer_amounts.get(source_account)
-            if source_amount is not None:
-                new_narration = _generate_transfer_narration(
-                    source_account, matched_account, source_amount
-                )
-
-        # Create new transaction with updated postings and narration
-        new_txn = entry._replace(postings=new_postings, narration=new_narration)
+        # Create new transaction with updated postings (keep original narration)
+        new_txn = entry._replace(postings=new_postings)
         new_entries.append(new_txn)
 
     # Log summary
