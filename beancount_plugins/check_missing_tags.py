@@ -83,7 +83,7 @@ __plugins__ = ("check_missing_tags",)
 def check_missing_tags(
     entries: data.Entries,
     options_map: dict,
-    config: str = None,
+    config: str | None = None,
 ) -> Tuple[data.Entries, List[ParserError]]:
     """Flag postings to tag-required accounts that lack tags.
 
