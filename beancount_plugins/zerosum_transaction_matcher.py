@@ -58,7 +58,7 @@ __copyright__ = "Copyright (C) 2026 slimslickner"
 __license__ = "GNU GPLv2"
 
 import logging
-from typing import Dict, Tuple
+from typing import Tuple
 
 from beancount.core import data
 
@@ -85,9 +85,7 @@ def _get_leaf_account(account: str) -> str:
     return account.split(":")[-1]
 
 
-def _generate_transfer_narration(
-    source_account: str, matched_account: str, source_amount
-) -> str:
+def _generate_transfer_narration(source_account: str, matched_account: str, source_amount) -> str:
     """Generate a human-readable transfer narration based on money flow.
 
     Uses the sign of the amount to determine direction:
@@ -191,9 +189,7 @@ def zerosum_transaction_matcher(
         if len(transfer_postings) >= 2 and txn_id:
             for posting in transfer_postings:
                 # Find other Assets/Liabilities in same transaction
-                other_postings = [
-                    p for p in transfer_postings if p.account != posting.account
-                ]
+                other_postings = [p for p in transfer_postings if p.account != posting.account]
                 if other_postings:
                     key = (txn_id, posting.account)
                     # Use first counterparty found
@@ -251,9 +247,7 @@ def zerosum_transaction_matcher(
                         for candidate in candidates:
                             if candidate["account"] != posting.account:
                                 matched_account = candidate["account"]
-                                logger.debug(
-                                    f"ZeroSum match: {posting.account} -> {matched_account}"
-                                )
+                                logger.debug(f"ZeroSum match: {posting.account} -> {matched_account}")
                                 break
                         if matched_account:
                             break
@@ -264,9 +258,7 @@ def zerosum_transaction_matcher(
                 if key in direct_transfer_index:
                     matched = direct_transfer_index[key]
                     matched_account = matched["account"]
-                    logger.debug(
-                        f"Direct transfer match: {posting.account} -> {matched_account}"
-                    )
+                    logger.debug(f"Direct transfer match: {posting.account} -> {matched_account}")
 
             if matched_account:
                 transfer_postings_matched += 1
@@ -277,15 +269,9 @@ def zerosum_transaction_matcher(
             else:
                 transfer_postings_unmatched += 1
                 if warn_unmatched:
-                    logger.warning(
-                        f"Transfer not matched: {posting.account} "
-                        f"on {entry.date} ({entry.narration})"
-                    )
+                    logger.warning(f"Transfer not matched: {posting.account} on {entry.date} ({entry.narration})")
                 else:
-                    logger.debug(
-                        f"Transfer not matched: {posting.account} "
-                        f"on {entry.date} ({entry.narration})"
-                    )
+                    logger.debug(f"Transfer not matched: {posting.account} on {entry.date} ({entry.narration})")
 
         # Second pass: add metadata to Equity:ZeroSum postings
         # For transactions with multiple Equity:ZeroSum postings (split transfers),
@@ -319,23 +305,16 @@ def zerosum_transaction_matcher(
                             if candidate["account"] != source_account:
                                 matched_account = candidate["account"]
                                 matched_date = candidate["date"]
-                                logger.debug(
-                                    f"Match by ID: {posting.account} -> {matched_account} (link: {link_key})"
-                                )
+                                logger.debug(f"Match by ID: {posting.account} -> {matched_account} (link: {link_key})")
                                 break
 
                 # Strategy 2: Fallback to direct transfer match if no match_id
                 if not matched_account:
                     for transfer_posting in entry.postings:
-                        if (
-                            _is_transfer_posting(transfer_posting)
-                            and transfer_posting.account in transfer_matches
-                        ):
+                        if _is_transfer_posting(transfer_posting) and transfer_posting.account in transfer_matches:
                             matched_account = transfer_matches[transfer_posting.account]
                             matched_date = entry.date
-                            logger.debug(
-                                f"Fallback match: {posting.account} -> {matched_account}"
-                            )
+                            logger.debug(f"Fallback match: {posting.account} -> {matched_account}")
                             break
 
                 if matched_account and source_account:
@@ -351,9 +330,7 @@ def zerosum_transaction_matcher(
                     # Generate narration for this posting and add as metadata
                     source_amount = transfer_amounts.get(source_account)
                     if source_amount is not None:
-                        narration = _generate_transfer_narration(
-                            source_account, matched_account, source_amount
-                        )
+                        narration = _generate_transfer_narration(source_account, matched_account, source_amount)
                         # If there was existing narration, append it in parentheses
                         if existing_narration:
                             narration = f"{narration} ({existing_narration})"
@@ -413,6 +390,4 @@ def _is_transfer_posting(posting: data.Posting) -> bool:
         return False
 
     # Check if account is Assets or Liabilities
-    return posting.account.startswith("Assets") or posting.account.startswith(
-        "Liabilities"
-    )
+    return posting.account.startswith("Assets") or posting.account.startswith("Liabilities")
