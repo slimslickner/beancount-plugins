@@ -1,0 +1,29 @@
+metadata:
+  transaction:
+    source_payee:
+      description: "Original payee name from import"
+      type: string
+      required: false
+    source_account:
+      description: "Source account for transfer transactions"
+      type: string
+      required: false
+    import_date:
+      description: "Date the transaction was imported"
+      type: date
+      required: false
+
+  posting:
+    tag:
+      description: "Posting-level categorization"
+      type: string
+      allowed_values: [personal, business, reimbursable]
+      required: false
+    receipt_id:
+      description: "Reference to receipt or supporting document"
+      type: string
+      required: false
+
+  plugin_exceptions:
+    - allowed_prefix: "_"  # Beancount internal keys
+    - allowed_keys: [predicted_payee, matched_transfer_account, matched_transfer_date]  # Smart importer and plugin keys

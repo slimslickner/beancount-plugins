@@ -19,14 +19,33 @@ INCLUDED PLUGINS:
    - Reports violations as parser errors for bean-check integration
    Usage: plugin "beancount_plugins.check_missing_tags"
 
+3. check_valid_tags
+   - Validates transaction tags against an allowed whitelist
+   - Loads allowed tags from tags.yaml configuration
+   - Reports violations for unknown tags
+   - Prevents typos and enforces controlled vocabulary
+   Usage: plugin "beancount_plugins.check_valid_tags"
+
+4. check_valid_metadata
+   - Validates metadata keys and values against a typed schema
+   - Enforces type constraints (string, int, bool, date, Decimal)
+   - Supports required fields and allowed_values constraints
+   - Validates at transaction and posting levels
+   - Reports violations with field context
+   Usage: plugin "beancount_plugins.check_valid_metadata"
+
 INTEGRATION:
-Add these plugins to your main ledger file:
+Add plugins to your main ledger file as needed:
 
     plugin "beancount_plugins.zerosum_transaction_matcher"
     plugin "beancount_plugins.check_missing_tags"
+    plugin "beancount_plugins.check_valid_tags"
+    plugin "beancount_plugins.check_valid_metadata"
 
 Each plugin can be used independently based on your needs.
 
 CONFIGURATION:
-See individual plugin modules for detailed configuration options and examples.
+See individual plugin modules for detailed configuration options and examples:
+- check_valid_tags requires: tags.yaml
+- check_valid_metadata requires: metadata_schema.yaml
 """

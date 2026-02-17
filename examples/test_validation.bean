@@ -1,0 +1,60 @@
+; Test file for check_valid_tags and check_valid_metadata plugins
+; This file demonstrates valid and invalid entries to test plugin validation
+
+option "title" "Test Validation Ledger"
+option "operating_currency" "USD"
+
+plugin "beancount_plugins.check_valid_tags" "tags.yaml"
+plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"
+
+2026-01-01 open Assets:Checking
+2026-01-01 open Expenses:Groceries
+2026-01-01 open Expenses:Travel
+2026-01-01 open Liabilities:Credit-Cards:MyCard
+
+; Valid transaction with allowed tag
+2026-01-05 * "Grocery store" #personal
+  source_payee: "Whole Foods"
+  Assets:Checking  -50.00 USD
+    tag: "personal"
+  Expenses:Groceries  50.00 USD
+
+; Valid transaction with reimbursable tag
+2026-01-10 * "Business lunch" #business
+  source_payee: "Restaurant XYZ"
+  Assets:Checking  -30.00 USD
+    tag: "business"
+  Expenses:Travel  30.00 USD
+
+; Valid transaction with tax-deductible tag
+2026-01-15 * "Tax preparation" #tax-deductible
+  Assets:Checking  -250.00 USD
+  Expenses:Travel  250.00 USD
+
+; Invalid transaction: unrecognized tag
+2026-01-20 * "Unknown category" #invalid-tag
+  Assets:Checking  -100.00 USD
+  Expenses:Groceries  100.00 USD
+
+; Invalid posting metadata: unknown key
+2026-01-25 * "Bad metadata key"
+  Assets:Checking  -75.00 USD
+    unknown_key: "this should fail"
+  Expenses:Groceries  75.00 USD
+
+; Invalid posting metadata: invalid allowed_values
+2026-01-30 * "Bad tag value"
+  Assets:Checking  -60.00 USD
+    tag: "invalid-category"
+  Expenses:Groceries  60.00 USD
+
+; Valid with multiple valid tags
+2026-02-01 * "Business travel" #business #travel
+  source_payee: "Airline"
+  Assets:Checking  -500.00 USD
+  Expenses:Travel  500.00 USD
+
+; Valid transaction with no metadata (should pass)
+2026-02-05 * "Simple transaction" #personal
+  Assets:Checking  -25.00 USD
+  Expenses:Groceries  25.00 USD
