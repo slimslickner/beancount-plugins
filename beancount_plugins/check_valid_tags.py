@@ -136,18 +136,12 @@ def check_valid_tags(
         for tag in entry.tags:
             if tag not in allowed_tags:
                 violations_count += 1
-                allowed_str = (
-                    ", ".join(sorted(allowed_tags)) if allowed_tags else "(none)"
-                )
                 error = ParserError(
                     source={
                         "filename": entry.meta.get("filename", "unknown"),
                         "lineno": entry.meta.get("lineno", 0),
                     },
-                    message=(
-                        f"Invalid tag '#{tag}' in '{entry.narration}' "
-                        f"(allowed: {allowed_str})"
-                    ),
+                    message=(f"Undefined tag '#{tag}'"),
                     entry=None,
                 )
                 errors.append(error)

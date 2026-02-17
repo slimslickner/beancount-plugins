@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Beancount plugin to validate metadata keys and values against a schema.
 
-This plugin enforces a typed metadata schema across transactions and postings,
+This plugin enforces a typed metadata schema across all directive types,
 ensuring data quality and consistency. It validates metadata key names,
 required vs. optional fields, and enforces type constraints and allowed values.
 
 WHAT IT DOES:
 - Loads metadata schema from a YAML configuration file
+- Validates metadata on all directive types: Transaction, Open, Close, Document, Event, Note, Commodity
 - Validates transaction-level metadata keys and values
-- Validates posting-level metadata keys and values
+- Validates posting-level metadata keys and values (transactions only)
 - Enforces type constraints (string, int, bool, date, Decimal)
 - Enforces allowed_values constraints
 - Enforces pattern constraints (regex for strings)
@@ -35,6 +36,34 @@ Create a metadata_schema.yaml file with:
           description: "Posting-level categorization"
           type: string
           allowed_values: [personal, business]
+      open:
+        tag-expected:
+          description: "If true, transactions posting to this account require tags"
+          type: bool
+      close:
+        reason:
+          description: "Reason for closing account"
+          type: string
+      document:
+        verified:
+          description: "Whether document has been verified"
+          type: bool
+      event:
+        category:
+          description: "Event category"
+          type: string
+      commodity:
+        name:
+          description: "Human-readable name of commodity"
+          type: string
+        cusip:
+          description: "CUSIP identifier"
+          type: string
+      note:
+        importance:
+          description: "Note importance level"
+          type: string
+          allowed_values: [low, medium, high]
       plugin_exceptions:
         - allowed_prefix: "_"
         - allowed_keys: [predicted_payee]
@@ -43,7 +72,13 @@ SCHEMA SPECIFICATION:
 
 1. SECTION STRUCTURE:
    - metadata.transaction: Keys valid at transaction level
-   - metadata.posting: Keys valid at posting level
+   - metadata.posting: Keys valid at posting level (transactions only)
+   - metadata.open: Keys valid on Open directives
+   - metadata.close: Keys valid on Close directives
+   - metadata.document: Keys valid on Document directives
+   - metadata.event: Keys valid on Event directives
+   - metadata.commodity: Keys valid on Commodity directives
+   - metadata.note: Keys valid on Note directives
    - metadata.plugin_exceptions: Skip validation for certain keys
 
 2. KEY SPECIFICATION:
@@ -52,8 +87,6 @@ SCHEMA SPECIFICATION:
    - required: (bool) If true, field must be present
    - allowed_values: (list) If present, value must be in this list
    - pattern: (string) Regex pattern for string values only
-   - applies_to: (list) If present, key valid at specified levels
-                        Can be: [transaction], [posting], or [transaction, posting]
 
 3. PLUGIN EXCEPTIONS:
    - allowed_prefix: Any key starting with this is skipped (e.g., "_" for internal Beancount keys)
@@ -71,6 +104,7 @@ Errors are reported with field context:
 
     your-file.bean:42: Invalid metadata key 'unknown_key' on transaction
     your-file.bean:42: Invalid value 'invalid' for posting metadata 'tag' (allowed: personal, business)
+    your-file.bean:15: Invalid metadata key 'unknown_key' on Open directive for 'Assets:Checking'
 
 COMPLEMENTARY PLUGINS:
 - check_valid_tags: Validates transaction tags against allowed list
@@ -146,13 +180,22 @@ def check_valid_metadata(
 
     # Extract schema sections
     metadata_section = config_data.get("metadata", {})
-    tx_schema = metadata_section.get("transaction", {})
-    posting_schema = metadata_section.get("posting", {})
+    directive_schemas = {
+        "transaction": metadata_section.get("transaction", {}),
+        "posting": metadata_section.get("posting", {}),
+        "open": metadata_section.get("open", {}),
+        "close": metadata_section.get("close", {}),
+        "document": metadata_section.get("document", {}),
+        "event": metadata_section.get("event", {}),
+        "commodity": metadata_section.get("commodity", {}),
+        "note": metadata_section.get("note", {}),
+    }
     exceptions = metadata_section.get("plugin_exceptions", [])
 
-    # Build allowed keys and exception lists
-    tx_allowed_keys = set(tx_schema.keys())
-    posting_allowed_keys = set(posting_schema.keys())
+    # Build allowed keys for each directive type
+    allowed_keys = {
+        key: set(schema.keys()) for key, schema in directive_schemas.items()
+    }
 
     # Build exception rules
     allowed_prefixes = []
@@ -166,8 +209,8 @@ def check_valid_metadata(
                     allowed_exception_keys.update(exception["allowed_keys"])
 
     logger.info(
-        f"Loaded metadata schema: {len(tx_allowed_keys)} transaction keys, "
-        f"{len(posting_allowed_keys)} posting keys"
+        f"Loaded metadata schema: {sum(len(s) for s in directive_schemas.values())} "
+        f"keys across {len([s for s in directive_schemas.values() if s])} directive types"
     )
 
     # System keys always skipped
@@ -175,12 +218,30 @@ def check_valid_metadata(
 
     violations_count = 0
 
-    # Validate transactions and postings
+    # Validate all directive types
     for entry in entries:
-        if not isinstance(entry, data.Transaction):
+        # Determine directive type and get schema
+        if isinstance(entry, data.Transaction):
+            directive_type = "transaction"
+        elif isinstance(entry, data.Open):
+            directive_type = "open"
+        elif isinstance(entry, data.Close):
+            directive_type = "close"
+        elif isinstance(entry, data.Document):
+            directive_type = "document"
+        elif isinstance(entry, data.Event):
+            directive_type = "event"
+        elif isinstance(entry, data.Commodity):
+            directive_type = "commodity"
+        elif isinstance(entry, data.Note):
+            directive_type = "note"
+        else:
             continue
 
-        # Validate transaction-level metadata
+        # Get schema for this directive type
+        schema = directive_schemas.get(directive_type, {})
+
+        # Validate directive-level metadata
         if entry.meta:
             for key, value in entry.meta.items():
                 # Skip system keys
@@ -196,14 +257,15 @@ def check_valid_metadata(
                     continue
 
                 # Check if key is allowed
-                if key not in tx_allowed_keys:
+                if key not in allowed_keys[directive_type]:
                     violations_count += 1
+                    context = _get_directive_context(entry, directive_type)
                     error = ParserError(
                         source={
                             "filename": entry.meta.get("filename", "unknown"),
                             "lineno": entry.meta.get("lineno", 0),
                         },
-                        message=f"Invalid metadata key '{key}' on transaction",
+                        message=f"Invalid metadata key '{key}' on {directive_type} directive{context}",
                         entry=None,
                     )
                     errors.append(error)
@@ -211,57 +273,58 @@ def check_valid_metadata(
 
                 # Validate value against schema
                 value_error = _validate_metadata_value(
-                    key, value, tx_schema[key], "transaction", entry
+                    key, value, schema[key], directive_type, entry, context=""
                 )
                 if value_error:
                     violations_count += 1
                     errors.append(value_error)
 
-        # Validate posting-level metadata
-        for posting in entry.postings:
-            if posting.meta:
-                for key, value in posting.meta.items():
-                    # Skip system keys
-                    if key in system_keys:
-                        continue
+        # Validate posting-level metadata (transactions only)
+        if isinstance(entry, data.Transaction):
+            for posting in entry.postings:
+                if posting.meta:
+                    for key, value in posting.meta.items():
+                        # Skip system keys
+                        if key in system_keys:
+                            continue
 
-                    # Skip keys matching exception prefixes
-                    if any(key.startswith(p) for p in allowed_prefixes):
-                        continue
+                        # Skip keys matching exception prefixes
+                        if any(key.startswith(p) for p in allowed_prefixes):
+                            continue
 
-                    # Skip keys in allowed exceptions
-                    if key in allowed_exception_keys:
-                        continue
+                        # Skip keys in allowed exceptions
+                        if key in allowed_exception_keys:
+                            continue
 
-                    # Check if key is allowed
-                    if key not in posting_allowed_keys:
-                        violations_count += 1
-                        error = ParserError(
-                            source={
-                                "filename": entry.meta.get("filename", "unknown"),
-                                "lineno": entry.meta.get("lineno", 0),
-                            },
-                            message=(
-                                f"Invalid metadata key '{key}' on posting to "
-                                f"'{posting.account}'"
-                            ),
-                            entry=None,
+                        # Check if key is allowed
+                        if key not in allowed_keys["posting"]:
+                            violations_count += 1
+                            error = ParserError(
+                                source={
+                                    "filename": entry.meta.get("filename", "unknown"),
+                                    "lineno": entry.meta.get("lineno", 0),
+                                },
+                                message=(
+                                    f"Invalid metadata key '{key}' on posting to "
+                                    f"'{posting.account}'"
+                                ),
+                                entry=None,
+                            )
+                            errors.append(error)
+                            continue
+
+                        # Validate value against schema
+                        value_error = _validate_metadata_value(
+                            key,
+                            value,
+                            directive_schemas["posting"][key],
+                            "posting",
+                            entry,
+                            f" (posting to '{posting.account}')",
                         )
-                        errors.append(error)
-                        continue
-
-                    # Validate value against schema
-                    value_error = _validate_metadata_value(
-                        key,
-                        value,
-                        posting_schema[key],
-                        "posting",
-                        entry,
-                        posting.account,
-                    )
-                    if value_error:
-                        violations_count += 1
-                        errors.append(value_error)
+                        if value_error:
+                            violations_count += 1
+                            errors.append(value_error)
 
     # Log summary
     if violations_count > 0:
@@ -272,13 +335,38 @@ def check_valid_metadata(
     return entries, errors
 
 
+def _get_directive_context(entry: data.Directive, directive_type: str) -> str:
+    """Get a context string describing the directive.
+
+    Args:
+        entry: The directive entry
+        directive_type: Type of directive (open, close, document, event, commodity, note, transaction)
+
+    Returns:
+        Context string for error messages
+    """
+    if directive_type in {"open", "close"}:
+        if isinstance(entry, (data.Open, data.Close)):
+            return f" for '{entry.account}'"
+    elif directive_type == "document":
+        if isinstance(entry, data.Document):
+            return f" for '{entry.account}' (filename: {entry.filename})"
+    elif directive_type == "event":
+        if isinstance(entry, data.Event):
+            return f" (type: {entry.type})"
+    elif directive_type == "commodity":
+        if isinstance(entry, data.Commodity):
+            return f" for '{entry.currency}'"
+    return ""
+
+
 def _validate_metadata_value(
     key: str,
     value: Any,
     schema: dict,
     level: str,
-    entry: data.Transaction,
-    account: str | None = None,
+    entry: data.Directive,
+    context: str = "",
 ) -> ParserError | None:
     """Validate a metadata value against its schema specification.
 
@@ -286,9 +374,9 @@ def _validate_metadata_value(
         key: Metadata key name
         value: Metadata value
         schema: Schema specification for this key
-        level: "transaction" or "posting"
-        entry: The transaction entry
-        account: Account name (for posting-level errors)
+        level: Directive type (transaction, posting, open, close, document, event, note)
+        entry: The directive entry
+        context: Additional context for error messages
 
     Returns:
         ParserError if validation fails, None otherwise
@@ -302,8 +390,8 @@ def _validate_metadata_value(
             f"Invalid type for {level} metadata '{key}': expected {type_name}, "
             f"got {actual_type}"
         )
-        if account:
-            msg += f" (posting to '{account}')"
+        if context:
+            msg += context
 
         return ParserError(
             source={
@@ -318,13 +406,9 @@ def _validate_metadata_value(
     allowed_values = schema.get("allowed_values")
     if allowed_values and isinstance(value, str):
         if value not in allowed_values:
-            allowed_str = ", ".join(str(v) for v in allowed_values)
-            msg = (
-                f"Invalid value '{value}' for {level} metadata '{key}' "
-                f"(allowed: {allowed_str})"
-            )
-            if account:
-                msg += f" (posting to '{account}')"
+            msg = f"Invalid value '{value}' for {level} metadata '{key}'"
+            if context:
+                msg += context
 
             return ParserError(
                 source={
@@ -343,8 +427,8 @@ def _validate_metadata_value(
                 f"Invalid format for {level} metadata '{key}': '{value}' "
                 f"does not match pattern '{pattern}'"
             )
-            if account:
-                msg += f" (posting to '{account}')"
+            if context:
+                msg += context
 
             return ParserError(
                 source={
