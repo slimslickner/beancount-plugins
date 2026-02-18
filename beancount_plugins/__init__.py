@@ -34,9 +34,17 @@ INCLUDED PLUGINS:
    - Reports violations with field context
    Usage: plugin "beancount_plugins.check_valid_metadata"
 
-INTEGRATION:
-Add plugins to your main ledger file as needed:
+5. posting_tags
+   - Enables per-posting tag granularity via 'tags' metadata on postings
+   - Promotes posting-level tags to the transaction level for Fava/bean-query visibility
+   - Preserves posting metadata for per-posting tag association
+   - Reports errors for invalid tags metadata values
+   Usage: plugin "beancount_plugins.posting_tags"
 
+INTEGRATION:
+Add plugins to your main ledger file as needed (order matters):
+
+    plugin "beancount_plugins.posting_tags"
     plugin "beancount_plugins.zerosum_transaction_matcher"
     plugin "beancount_plugins.check_missing_tags"
     plugin "beancount_plugins.check_valid_tags"
@@ -46,6 +54,7 @@ Each plugin can be used independently based on your needs.
 
 CONFIGURATION:
 See individual plugin modules for detailed configuration options and examples:
+- posting_tags: no config required
 - check_valid_tags requires: tags.yaml
 - check_valid_metadata requires: metadata_schema.yaml
 """
