@@ -3,7 +3,7 @@
 
 Beancount only supports #tag syntax at the transaction level. All postings in a
 transaction inherit the same tags, which is incorrect for split-purpose transactions
-(e.g., a Costco trip with furniture for #112W4thAve and a gift for #Jim). This plugin
+(e.g., a Costco trip with furniture for #123MainSt and a gift for #Jim). This plugin
 adds per-posting tag granularity while keeping tags visible/searchable at the
 transaction level in tools like Fava.
 
@@ -24,16 +24,16 @@ Add a 'tags' metadata key to postings with space-separated tag names (no # prefi
 
     2026-01-15 * "Costco"
         Expenses:Furniture  200 USD
-            tags: "112W4thAve"
+            tags: "123MainSt"
         Expenses:Gifts  50 USD
             tags: "Jim"
         Assets:Checking  -250 USD
 
 After plugin processing, the transaction becomes:
 
-    2026-01-15 * "Costco" #112W4thAve #Jim
+    2026-01-15 * "Costco" #123MainSt #Jim
         Expenses:Furniture  200 USD
-            tags: "112W4thAve"
+            tags: "123MainSt"
         Expenses:Gifts  50 USD
             tags: "Jim"
         Assets:Checking  -250 USD
@@ -46,7 +46,7 @@ Use space-separated tag names:
 
     2026-01-15 * "Home Depot"
         Expenses:Home-Improvement  300 USD
-            tags: "112W4thAve renovation"
+            tags: "123MainSt renovation"
 
 ERROR REPORTING:
 Reports ParserErrors for non-string 'tags' metadata values.
