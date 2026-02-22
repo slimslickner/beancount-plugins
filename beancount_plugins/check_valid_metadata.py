@@ -147,11 +147,13 @@ def check_valid_metadata(
     """
     errors = []
 
-    # Determine config file path
+    # Determine config file path, resolved relative to the ledger file's directory.
+    ledger_dir = Path(options_map.get("filename", "")).parent
     if config:
         config_path = Path(config)
+        if not config_path.is_absolute():
+            config_path = ledger_dir / config_path
     else:
-        ledger_dir = Path.cwd()
         config_path = ledger_dir / "metadata_schema.yaml"
 
     # Load configuration

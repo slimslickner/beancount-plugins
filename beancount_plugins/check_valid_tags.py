@@ -80,13 +80,13 @@ def check_valid_tags(
     """
     errors = []
 
-    # Determine config file path
+    # Determine config file path, resolved relative to the ledger file's directory.
+    ledger_dir = Path(options_map.get("filename", "")).parent
     if config:
         config_path = Path(config)
+        if not config_path.is_absolute():
+            config_path = ledger_dir / config_path
     else:
-        # Default to tags.yaml in the same directory as main.bean
-        # The ledger directory is typically available via options_map
-        ledger_dir = Path.cwd()
         config_path = ledger_dir / "tags.yaml"
 
     # Load configuration
