@@ -1,0 +1,2 @@
+- [x] Change the "description" property to "label" (to match beancount-sqlite)
+- [x] Make sure the metadata 'required' flag actually works (it currently doesn't)

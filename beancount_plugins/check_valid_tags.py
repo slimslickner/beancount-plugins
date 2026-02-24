@@ -23,13 +23,13 @@ Create a tags.yaml file in your ledger directory with:
 
     tags:
       tax-deductible:
-        description: "Expenses that may be tax-deductible"
+        label: "Expenses that may be tax-deductible"
       reimbursable:
-        description: "Expenses to be reimbursed"
+        label: "Expenses to be reimbursed"
       travel:
-        description: "Travel-related expenses"
+        label: "Travel-related expenses"
       medical:
-        description: "Medical expenses"
+        label: "Medical expenses"
 
 HOW IT WORKS:
 1. Load the tags.yaml configuration file

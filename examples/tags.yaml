@@ -1,13 +1,13 @@
 tags:
   tax-deductible:
-    description: "Expenses that may be tax-deductible"
+    label: "Expenses that may be tax-deductible"
   reimbursable:
-    description: "Expenses to be reimbursed"
+    label: "Expenses to be reimbursed"
   travel:
-    description: "Travel-related expenses"
+    label: "Travel-related expenses"
   medical:
-    description: "Medical expenses"
+    label: "Medical expenses"
   business:
-    description: "Business-related expenses"
+    label: "Business-related expenses"
   personal:
-    description: "Personal expenses"
+    label: "Personal expenses"

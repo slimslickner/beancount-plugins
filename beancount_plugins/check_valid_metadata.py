@@ -28,40 +28,40 @@ Create a metadata_schema.yaml file with:
     metadata:
       transaction:
         source_payee:
-          description: "Original payee name from import"
+          label: "Original payee name from import"
           type: string
           required: false
       posting:
         tag:
-          description: "Posting-level categorization"
+          label: "Posting-level categorization"
           type: string
           allowed_values: [personal, business]
       open:
         tag-expected:
-          description: "If true, transactions posting to this account require tags"
+          label: "If true, transactions posting to this account require tags"
           type: bool
       close:
         reason:
-          description: "Reason for closing account"
+          label: "Reason for closing account"
           type: string
       document:
         verified:
-          description: "Whether document has been verified"
+          label: "Whether document has been verified"
           type: bool
       event:
         category:
-          description: "Event category"
+          label: "Event category"
           type: string
       commodity:
         name:
-          description: "Human-readable name of commodity"
+          label: "Human-readable name of commodity"
           type: string
         cusip:
-          description: "CUSIP identifier"
+          label: "CUSIP identifier"
           type: string
       note:
         importance:
-          description: "Note importance level"
+          label: "Note importance level"
           type: string
           allowed_values: [low, medium, high]
       plugin_exceptions:
@@ -82,7 +82,7 @@ SCHEMA SPECIFICATION:
    - metadata.plugin_exceptions: Skip validation for certain keys
 
 2. KEY SPECIFICATION:
-   - description: (string) Documentation of the field
+   - label: (string) Documentation of the field
    - type: (string) One of: string, int, bool, date, Decimal
    - required: (bool) If true, field must be present
    - allowed_values: (list) If present, value must be in this list
@@ -199,6 +199,16 @@ def check_valid_metadata(
         key: set(schema.keys()) for key, schema in directive_schemas.items()
     }
 
+    # Build required keys for each directive type
+    required_keys = {
+        dtype: {
+            k
+            for k, spec in schema.items()
+            if isinstance(spec, dict) and spec.get("required") is True
+        }
+        for dtype, schema in directive_schemas.items()
+    }
+
     # Build exception rules
     allowed_prefixes = []
     allowed_exception_keys = set()
@@ -281,6 +291,25 @@ def check_valid_metadata(
                     violations_count += 1
                     errors.append(value_error)
 
+        # Check for missing required directive-level metadata
+        context = _get_directive_context(entry, directive_type)
+        present_keys = set(entry.meta.keys()) - system_keys if entry.meta else set()
+        for req_key in required_keys[directive_type]:
+            if req_key not in present_keys:
+                violations_count += 1
+                errors.append(
+                    ParserError(
+                        source={
+                            "filename": entry.meta.get("filename", "unknown")
+                            if entry.meta
+                            else "unknown",
+                            "lineno": entry.meta.get("lineno", 0) if entry.meta else 0,
+                        },
+                        message=f"Missing required metadata '{req_key}' on {directive_type} directive{context}",
+                        entry=None,
+                    )
+                )
+
         # Validate posting-level metadata (transactions only)
         if isinstance(entry, data.Transaction):
             for posting in entry.postings:
@@ -327,6 +356,24 @@ def check_valid_metadata(
                         if value_error:
                             violations_count += 1
                             errors.append(value_error)
+
+                # Check for missing required posting-level metadata
+                posting_present = (
+                    set(posting.meta.keys()) - system_keys if posting.meta else set()
+                )
+                for req_key in required_keys["posting"]:
+                    if req_key not in posting_present:
+                        violations_count += 1
+                        errors.append(
+                            ParserError(
+                                source={
+                                    "filename": entry.meta.get("filename", "unknown"),
+                                    "lineno": entry.meta.get("lineno", 0),
+                                },
+                                message=f"Missing required metadata '{req_key}' on posting to '{posting.account}'",
+                                entry=None,
+                            )
+                        )
 
     # Log summary
     if violations_count > 0:
