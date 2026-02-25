@@ -1,2 +1,3 @@
 - [x] Change the "description" property to "label" (to match beancount-sqlite)
 - [x] Make sure the metadata 'required' flag actually works (it currently doesn't)
+- [ ] Set the metadata validator to accept regex on required enforcement (e.g. only require XYZ metadata on Expenses:* accounts)
