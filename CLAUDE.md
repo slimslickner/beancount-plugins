@@ -4,16 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Python package providing custom plugins for **Beancount**, a text-based accounting system. The package contains two plugins:
+This is a Python package providing custom plugins for **Beancount**, a text-based accounting system. The package contains five plugins:
 
 1. **zerosum_transaction_matcher** - Automatically matches and enriches transfer postings between accounts with metadata
 2. **check_missing_tags** - Validates that transactions have required tags based on account configuration
+3. **check_valid_tags** - Validates transaction tags against an allowed whitelist
+4. **check_valid_metadata** - Validates metadata keys and values against a typed schema
+5. **posting_tags** - Enables per-posting tag granularity via 'tags' metadata on postings
 
 The plugins are designed to be loaded into a Beancount ledger file and process transactions at load time.
 
 ## Architecture Pattern
 
-Both plugins follow the same two-phase architecture:
+Most plugins follow a two-phase architecture:
 
 ### Phase 1: Index/Collection
 - Plugins scan through all transactions or directives (like Open statements)
@@ -23,7 +26,7 @@ Both plugins follow the same two-phase architecture:
 ### Phase 2: Processing
 - Plugins process transactions and either:
   - Add metadata to postings (zerosum_transaction_matcher)
-  - Report validation errors (check_missing_tags)
+  - Report validation errors (check_missing_tags, check_valid_tags, check_valid_metadata, posting_tags)
 
 **Key Insight**: This pattern allows plugins to operate efficiently without nested lookups.
 
@@ -52,12 +55,20 @@ All three commands must complete with zero errors before committing changes. If 
 ## Important Files
 
 - **`beancount_plugins/__init__.py`** - Package entry point with plugin documentation
-- **`beancount_plugins/zerosum_transaction_matcher.py`** - Transfer matching plugin (~17KB)
-  - Key function: `process_entry()` - main plugin entry point
+- **`beancount_plugins/zerosum_transaction_matcher.py`** - Transfer matching plugin
+  - Key function: `zerosum_transaction_matcher()` - main plugin entry point
   - Uses ZeroSum links created by Beancount's built-in zerosum plugin
-- **`beancount_plugins/check_missing_tags.py`** - Tag validation plugin (~5KB)
-  - Key function: `process_entry()` - main plugin entry point
+- **`beancount_plugins/check_missing_tags.py`** - Tag validation plugin
+  - Key function: `check_missing_tags()` - main plugin entry point
   - Scans Open directives for `tag-expected: True` metadata
+- **`beancount_plugins/check_valid_tags.py`** - Tag whitelist validation plugin
+  - Key function: `check_valid_tags()` - main plugin entry point
+  - Requires `tags.yaml` configuration file
+- **`beancount_plugins/check_valid_metadata.py`** - Metadata schema validation plugin
+  - Key function: `check_valid_metadata()` - main plugin entry point
+  - Requires `metadata_schema.yaml` configuration file
+- **`beancount_plugins/posting_tags.py`** - Per-posting tags plugin
+  - Key function: `posting_tags()` - main plugin entry point
 - **`pyproject.toml`** - Package metadata and dependencies
 
 ## How to Test
@@ -67,8 +78,11 @@ There are currently no automated test files in the repository. To test the plugi
 ### Option 1: Manual Testing with Beancount CLI
 1. Create a test Beancount ledger file that uses the plugins:
    ```beancount
+   plugin "beancount_plugins.posting_tags"
    plugin "beancount_plugins.zerosum_transaction_matcher"
    plugin "beancount_plugins.check_missing_tags"
+   plugin "beancount_plugins.check_valid_tags"
+   plugin "beancount_plugins.check_valid_metadata"
    ```
 2. Run: `bean-check your-ledger.beancount`
 3. The plugins will process your transactions and report any errors
@@ -91,9 +105,33 @@ If adding tests, follow these conventions based on .gitignore:
 - Checks transaction tags via `#tag` syntax in narration
 - Reports ParserErrors that integrate with `bean-check`
 
+### For check_valid_tags
+- Reads allowed tags from `tags.yaml` configuration file
+- Validates all transaction tags against whitelist
+- Reports ParserErrors for undefined tags
+
+### For check_valid_metadata
+- Reads metadata schema from `metadata_schema.yaml` configuration file
+- Validates metadata keys and values against typed schema
+- Supports type constraints (string, int, bool, date, Decimal)
+- Supports required fields and allowed_values constraints
+- Reports ParserErrors for schema violations
+
+### For posting_tags
+- Reads `tags` metadata from postings
+- Promotes posting-level tags to transaction level for Fava/bean-query visibility
+- Preserves posting metadata for per-posting tag association
+
+## Configuration Files
+
+Some plugins require configuration files:
+
+- **`tags.yaml`** - Required by `check_valid_tags` plugin
+- **`metadata_schema.yaml`** - Required by `check_valid_metadata` plugin
+
 ## Git Conventions
 
-The repository follows standard Python packaging conventions with setuptools. Recent commits (like `159fecf fix the transaction matcher`) suggest fixes and refinements to the matching logic.
+The repository follows standard Python packaging conventions with setuptools.
 
 ## Building/Packaging
 
