@@ -13,6 +13,7 @@ WHAT IT DOES:
 - Enforces type constraints (string, int, bool, date, Decimal)
 - Enforces allowed_values constraints
 - Enforces pattern constraints (regex for strings)
+- Enforces account_pattern constraints (scope required fields to matching accounts)
 - Reports violations as parser errors with field context
 
 USAGE:
@@ -31,6 +32,11 @@ Create a metadata_schema.yaml file with:
           label: "Original payee name from import"
           type: string
           required: false
+        receipt_id:
+          label: "Receipt reference"
+          type: string
+          required: true
+          account_pattern: "Expenses:.*"  # Only required on Expenses accounts
       posting:
         tag:
           label: "Posting-level categorization"
@@ -85,10 +91,18 @@ SCHEMA SPECIFICATION:
    - label: (string) Documentation of the field
    - type: (string) One of: string, int, bool, date, Decimal
    - required: (bool) If true, field must be present
+   - account_pattern: (string) Regex pattern to scope required fields to matching accounts
    - allowed_values: (list) If present, value must be in this list
    - pattern: (string) Regex pattern for string values only
 
-3. PLUGIN EXCEPTIONS:
+3. ACCOUNT PATTERN:
+   When account_pattern is set on a required field:
+   - For transaction-level metadata: required only if ANY posting account matches
+   - For posting-level metadata: required only if the specific posting account matches
+   - Uses re.fullmatch() for exact matching (e.g., "Expenses:.*" matches all Expenses)
+   - If account_pattern is not set, the field is universally required
+
+4. PLUGIN EXCEPTIONS:
    - allowed_prefix: Any key starting with this is skipped (e.g., "_" for internal Beancount keys)
    - allowed_keys: Specific keys that bypass schema validation (e.g., smart_importer keys)
 
@@ -119,7 +133,7 @@ import re
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, List, Tuple
+from typing import Any
 
 import yaml
 from beancount.core import data
@@ -129,12 +143,15 @@ logger = logging.getLogger(__name__)
 
 __plugins__ = ("check_valid_metadata",)
 
+# System keys always skipped during validation
+_SYSTEM_KEYS = {"filename", "lineno"}
+
 
 def check_valid_metadata(
     entries: data.Entries,
     options_map: dict,
     config: str | None = None,
-) -> Tuple[data.Entries, List[ParserError]]:
+) -> tuple[data.Entries, list[ParserError]]:
     """Validate metadata keys and values against a typed schema.
 
     Args:
@@ -145,7 +162,7 @@ def check_valid_metadata(
     Returns:
         Tuple of (entries_unchanged, errors)
     """
-    errors = []
+    errors: list[ParserError] = []
 
     # Determine config file path, resolved relative to the ledger file's directory.
     ledger_dir = Path(options_map.get("filename", "")).parent
@@ -164,7 +181,7 @@ def check_valid_metadata(
             entry=None,
         )
         errors.append(error)
-        logger.warning(f"Metadata schema file not found: {config_path}")
+        logger.warning("Metadata schema file not found: %s", config_path)
         return entries, errors
 
     try:
@@ -177,7 +194,7 @@ def check_valid_metadata(
             entry=None,
         )
         errors.append(error)
-        logger.error(f"Failed to load metadata schema: {e}")
+        logger.error("Failed to load metadata schema: %s", e)
         return entries, errors
 
     # Extract schema sections
@@ -199,10 +216,10 @@ def check_valid_metadata(
         key: set(schema.keys()) for key, schema in directive_schemas.items()
     }
 
-    # Build required keys for each directive type
-    required_keys = {
+    # Build required keys for each directive type (key -> spec dict)
+    required_specs: dict[str, dict[str, dict]] = {
         dtype: {
-            k
+            k: spec
             for k, spec in schema.items()
             if isinstance(spec, dict) and spec.get("required") is True
         }
@@ -210,8 +227,8 @@ def check_valid_metadata(
     }
 
     # Build exception rules
-    allowed_prefixes = []
-    allowed_exception_keys = set()
+    allowed_prefixes: list[str] = []
+    allowed_exception_keys: set[str] = set()
     for exception in exceptions:
         if isinstance(exception, dict):
             if "allowed_prefix" in exception:
@@ -221,12 +238,10 @@ def check_valid_metadata(
                     allowed_exception_keys.update(exception["allowed_keys"])
 
     logger.info(
-        f"Loaded metadata schema: {sum(len(s) for s in directive_schemas.values())} "
-        f"keys across {len([s for s in directive_schemas.values() if s])} directive types"
+        "Loaded metadata schema: %d keys across %d directive types",
+        sum(len(s) for s in directive_schemas.values()),
+        len([s for s in directive_schemas.values() if s]),
     )
-
-    # System keys always skipped
-    system_keys = {"filename", "lineno"}
 
     violations_count = 0
 
@@ -250,138 +265,178 @@ def check_valid_metadata(
         else:
             continue
 
-        # Get schema for this directive type
         schema = directive_schemas.get(directive_type, {})
+        context = _get_directive_context(entry, directive_type)
 
-        # Validate directive-level metadata
-        if entry.meta:
-            for key, value in entry.meta.items():
-                # Skip system keys
-                if key in system_keys:
-                    continue
-
-                # Skip keys matching exception prefixes
-                if any(key.startswith(p) for p in allowed_prefixes):
-                    continue
-
-                # Skip keys in allowed exceptions
-                if key in allowed_exception_keys:
-                    continue
-
-                # Check if key is allowed
-                if key not in allowed_keys[directive_type]:
-                    violations_count += 1
-                    context = _get_directive_context(entry, directive_type)
-                    error = ParserError(
-                        source={
-                            "filename": entry.meta.get("filename", "unknown"),
-                            "lineno": entry.meta.get("lineno", 0),
-                        },
-                        message=f"Invalid metadata key '{key}' on {directive_type} directive{context}",
-                        entry=None,
-                    )
-                    errors.append(error)
-                    continue
-
-                # Validate value against schema
-                value_error = _validate_metadata_value(
-                    key, value, schema[key], directive_type, entry, context=""
-                )
-                if value_error:
-                    violations_count += 1
-                    errors.append(value_error)
+        # Validate directive-level metadata keys and values
+        key_errors = _validate_metadata_keys(
+            meta=entry.meta,
+            allowed=allowed_keys[directive_type],
+            schema=schema,
+            level=directive_type,
+            entry=entry,
+            context=context,
+            allowed_prefixes=allowed_prefixes,
+            allowed_exception_keys=allowed_exception_keys,
+        )
+        violations_count += len(key_errors)
+        errors.extend(key_errors)
 
         # Check for missing required directive-level metadata
-        context = _get_directive_context(entry, directive_type)
-        present_keys = set(entry.meta.keys()) - system_keys if entry.meta else set()
-        for req_key in required_keys[directive_type]:
-            if req_key not in present_keys:
-                violations_count += 1
-                errors.append(
-                    ParserError(
-                        source={
-                            "filename": entry.meta.get("filename", "unknown")
-                            if entry.meta
-                            else "unknown",
-                            "lineno": entry.meta.get("lineno", 0) if entry.meta else 0,
-                        },
-                        message=f"Missing required metadata '{req_key}' on {directive_type} directive{context}",
-                        entry=None,
-                    )
+        present_keys = set(entry.meta.keys()) - _SYSTEM_KEYS if entry.meta else set()
+        accounts = (
+            [p.account for p in entry.postings]
+            if isinstance(entry, data.Transaction)
+            else []
+        )
+        for req_key, req_spec in required_specs[directive_type].items():
+            if req_key in present_keys:
+                continue
+            if not _account_pattern_matches(req_spec, accounts):
+                continue
+            violations_count += 1
+            errors.append(
+                ParserError(
+                    source={
+                        "filename": entry.meta.get("filename", "unknown")
+                        if entry.meta
+                        else "unknown",
+                        "lineno": entry.meta.get("lineno", 0) if entry.meta else 0,
+                    },
+                    message=f"Missing required metadata '{req_key}' on {directive_type} directive{context}",
+                    entry=None,
                 )
+            )
 
         # Validate posting-level metadata (transactions only)
         if isinstance(entry, data.Transaction):
             for posting in entry.postings:
-                if posting.meta:
-                    for key, value in posting.meta.items():
-                        # Skip system keys
-                        if key in system_keys:
-                            continue
+                posting_context = f" (posting to '{posting.account}')"
 
-                        # Skip keys matching exception prefixes
-                        if any(key.startswith(p) for p in allowed_prefixes):
-                            continue
-
-                        # Skip keys in allowed exceptions
-                        if key in allowed_exception_keys:
-                            continue
-
-                        # Check if key is allowed
-                        if key not in allowed_keys["posting"]:
-                            violations_count += 1
-                            error = ParserError(
-                                source={
-                                    "filename": entry.meta.get("filename", "unknown"),
-                                    "lineno": entry.meta.get("lineno", 0),
-                                },
-                                message=(
-                                    f"Invalid metadata key '{key}' on posting to "
-                                    f"'{posting.account}'"
-                                ),
-                                entry=None,
-                            )
-                            errors.append(error)
-                            continue
-
-                        # Validate value against schema
-                        value_error = _validate_metadata_value(
-                            key,
-                            value,
-                            directive_schemas["posting"][key],
-                            "posting",
-                            entry,
-                            f" (posting to '{posting.account}')",
-                        )
-                        if value_error:
-                            violations_count += 1
-                            errors.append(value_error)
+                key_errors = _validate_metadata_keys(
+                    meta=posting.meta,
+                    allowed=allowed_keys["posting"],
+                    schema=directive_schemas["posting"],
+                    level="posting",
+                    entry=entry,
+                    context=posting_context,
+                    allowed_prefixes=allowed_prefixes,
+                    allowed_exception_keys=allowed_exception_keys,
+                )
+                violations_count += len(key_errors)
+                errors.extend(key_errors)
 
                 # Check for missing required posting-level metadata
                 posting_present = (
-                    set(posting.meta.keys()) - system_keys if posting.meta else set()
+                    set(posting.meta.keys()) - _SYSTEM_KEYS if posting.meta else set()
                 )
-                for req_key in required_keys["posting"]:
-                    if req_key not in posting_present:
-                        violations_count += 1
-                        errors.append(
-                            ParserError(
-                                source={
-                                    "filename": entry.meta.get("filename", "unknown"),
-                                    "lineno": entry.meta.get("lineno", 0),
-                                },
-                                message=f"Missing required metadata '{req_key}' on posting to '{posting.account}'",
-                                entry=None,
-                            )
+                for req_key, req_spec in required_specs["posting"].items():
+                    if req_key in posting_present:
+                        continue
+                    if not _account_pattern_matches(req_spec, [posting.account]):
+                        continue
+                    violations_count += 1
+                    errors.append(
+                        ParserError(
+                            source={
+                                "filename": entry.meta.get("filename", "unknown"),
+                                "lineno": entry.meta.get("lineno", 0),
+                            },
+                            message=f"Missing required metadata '{req_key}' on posting to '{posting.account}'",
+                            entry=None,
                         )
+                    )
 
     # Log summary
     if violations_count > 0:
-        logger.warning(f"Found {violations_count} metadata validation errors")
+        logger.warning("Found %d metadata validation errors", violations_count)
     else:
         logger.info("All metadata is valid")
 
     return entries, errors
+
+
+def _validate_metadata_keys(
+    meta: dict | None,
+    allowed: set[str],
+    schema: dict,
+    level: str,
+    entry: data.Directive,
+    context: str,
+    allowed_prefixes: list[str],
+    allowed_exception_keys: set[str],
+) -> list[ParserError]:
+    """Validate metadata keys and values against schema.
+
+    Checks each key in meta against allowed keys and exception rules,
+    then validates values against schema constraints.
+
+    Args:
+        meta: Metadata dict to validate (may be None)
+        allowed: Set of allowed key names for this level
+        schema: Schema dict for value validation
+        level: Directive type name (for error messages)
+        entry: The directive entry (for file/line info)
+        context: Additional context string for error messages
+        allowed_prefixes: Prefixes that bypass validation
+        allowed_exception_keys: Specific keys that bypass validation
+
+    Returns:
+        List of ParserError for any violations found
+    """
+    if not meta:
+        return []
+
+    errors: list[ParserError] = []
+    source = {
+        "filename": entry.meta.get("filename", "unknown") if entry.meta else "unknown",
+        "lineno": entry.meta.get("lineno", 0) if entry.meta else 0,
+    }
+
+    for key, value in meta.items():
+        if key in _SYSTEM_KEYS:
+            continue
+        if any(key.startswith(p) for p in allowed_prefixes):
+            continue
+        if key in allowed_exception_keys:
+            continue
+
+        if key not in allowed:
+            errors.append(
+                ParserError(
+                    source=source,
+                    message=f"Invalid metadata key '{key}' on {level} directive{context}",
+                    entry=None,
+                )
+            )
+            continue
+
+        value_error = _validate_metadata_value(
+            key, value, schema[key], level, entry, context
+        )
+        if value_error:
+            errors.append(value_error)
+
+    return errors
+
+
+def _account_pattern_matches(spec: dict, accounts: list[str]) -> bool:
+    """Check if any account matches the spec's account_pattern.
+
+    If the spec has no account_pattern, returns True (universally required).
+    Otherwise, returns True only if at least one account matches the pattern.
+
+    Args:
+        spec: Schema spec dict that may contain 'account_pattern'
+        accounts: List of account names to check
+
+    Returns:
+        True if the requirement applies
+    """
+    pattern = spec.get("account_pattern")
+    if not pattern:
+        return True
+    return any(re.fullmatch(pattern, account) for account in accounts)
 
 
 def _get_directive_context(entry: data.Directive, directive_type: str) -> str:
@@ -430,6 +485,11 @@ def _validate_metadata_value(
     Returns:
         ParserError if validation fails, None otherwise
     """
+    source = {
+        "filename": entry.meta.get("filename", "unknown"),
+        "lineno": entry.meta.get("lineno", 0),
+    }
+
     # Check type constraint
     type_constraint = schema.get("type")
     if type_constraint and not _check_type(value, type_constraint):
@@ -442,14 +502,7 @@ def _validate_metadata_value(
         if context:
             msg += context
 
-        return ParserError(
-            source={
-                "filename": entry.meta.get("filename", "unknown"),
-                "lineno": entry.meta.get("lineno", 0),
-            },
-            message=msg,
-            entry=None,
-        )
+        return ParserError(source=source, message=msg, entry=None)
 
     # Check allowed_values constraint (only for strings)
     allowed_values = schema.get("allowed_values")
@@ -459,14 +512,7 @@ def _validate_metadata_value(
             if context:
                 msg += context
 
-            return ParserError(
-                source={
-                    "filename": entry.meta.get("filename", "unknown"),
-                    "lineno": entry.meta.get("lineno", 0),
-                },
-                message=msg,
-                entry=None,
-            )
+            return ParserError(source=source, message=msg, entry=None)
 
     # Check pattern constraint (only for strings)
     pattern = schema.get("pattern")
@@ -479,14 +525,7 @@ def _validate_metadata_value(
             if context:
                 msg += context
 
-            return ParserError(
-                source={
-                    "filename": entry.meta.get("filename", "unknown"),
-                    "lineno": entry.meta.get("lineno", 0),
-                },
-                message=msg,
-                entry=None,
-            )
+            return ParserError(source=source, message=msg, entry=None)
 
     return None
 

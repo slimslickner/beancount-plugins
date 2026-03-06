@@ -12,6 +12,11 @@ metadata:
       label: "Date the transaction was imported"
       type: date
       required: false
+    receipt_id:
+      label: "Reference to receipt or supporting document"
+      type: string
+      required: true
+      account_pattern: "Expenses:.*"  # Only required on Expenses accounts
 
   posting:
     tag:

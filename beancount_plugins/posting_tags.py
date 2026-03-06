@@ -56,7 +56,6 @@ __copyright__ = "Copyright (C) 2026 slimslickner"
 __license__ = "GNU GPLv2"
 
 import logging
-from typing import List, Tuple
 
 from beancount.core import data
 from beancount.parser.parser import ParserError
@@ -70,7 +69,7 @@ def posting_tags(
     entries: data.Entries,
     options_map: dict,
     config: str | None = None,
-) -> Tuple[data.Entries, List[ParserError]]:
+) -> tuple[data.Entries, list[ParserError]]:
     """Promote posting-level tags to the transaction level.
 
     Args:

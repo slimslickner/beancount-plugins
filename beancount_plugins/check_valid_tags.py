@@ -8,6 +8,7 @@ ensures consistent, predictable tagging practices and prevents typos.
 WHAT IT DOES:
 - Loads allowed tags from a YAML configuration file
 - Validates all transaction tags against this whitelist
+- Enforces link requirements for specific tags (require_link)
 - Reports violations as parser errors with proper file/line references
 - Integrates seamlessly with bean-check for validation pipelines
 
@@ -26,21 +27,29 @@ Create a tags.yaml file in your ledger directory with:
         label: "Expenses that may be tax-deductible"
       reimbursable:
         label: "Expenses to be reimbursed"
+        require_link: true  # Transactions with this tag must have a link
       travel:
         label: "Travel-related expenses"
       medical:
         label: "Medical expenses"
 
+REQUIRE_LINK:
+When require_link is true for a tag, any transaction using that tag must also
+have at least one link (^link-name). This is useful for tags like #reimbursable
+where you want to ensure a reference to a reimbursement request or receipt.
+
 HOW IT WORKS:
 1. Load the tags.yaml configuration file
-2. Extract all allowed tag names
+2. Extract all allowed tag names and link requirements
 3. For each transaction, validate that all tags are in the allowed set
-4. Report ParserErrors for any unrecognized tags
+4. For tags with require_link, validate that the transaction has links
+5. Report ParserErrors for any violations
 
 ERROR REPORTING:
 Errors are reported as ParserErrors with proper file/line information:
 
-    your-file.bean:42: Invalid tag '#unknown-tag' (allowed: tax-deductible, reimbursable, travel, medical)
+    your-file.bean:42: Undefined tag '#unknown-tag'
+    your-file.bean:42: Tag '#reimbursable' requires a link (e.g., ^receipt-123)
 
 COMPLEMENTARY PLUGINS:
 - check_missing_tags: Enforces that certain accounts have tags
@@ -52,7 +61,6 @@ __license__ = "GNU GPLv2"
 
 import logging
 from pathlib import Path
-from typing import List, Tuple
 
 import yaml
 from beancount.core import data
@@ -67,7 +75,7 @@ def check_valid_tags(
     entries: data.Entries,
     options_map: dict,
     config: str | None = None,
-) -> Tuple[data.Entries, List[ParserError]]:
+) -> tuple[data.Entries, list[ParserError]]:
     """Validate that all transaction tags are in the allowed list.
 
     Args:
@@ -78,7 +86,7 @@ def check_valid_tags(
     Returns:
         Tuple of (entries_unchanged, errors)
     """
-    errors = []
+    errors: list[ParserError] = []
 
     # Determine config file path, resolved relative to the ledger file's directory.
     ledger_dir = Path(options_map.get("filename", "")).parent
@@ -97,7 +105,7 @@ def check_valid_tags(
             entry=None,
         )
         errors.append(error)
-        logger.warning(f"Tags configuration file not found: {config_path}")
+        logger.warning("Tags configuration file not found: %s", config_path)
         return entries, errors
 
     try:
@@ -110,16 +118,22 @@ def check_valid_tags(
             entry=None,
         )
         errors.append(error)
-        logger.error(f"Failed to load tags configuration: {e}")
+        logger.error("Failed to load tags configuration: %s", e)
         return entries, errors
 
-    # Extract allowed tags
-    allowed_tags = set()
+    # Extract allowed tags and link requirements
+    allowed_tags: set[str] = set()
+    tags_requiring_link: set[str] = set()
     tags_section = config_data.get("tags", {})
     if isinstance(tags_section, dict):
         allowed_tags = set(tags_section.keys())
+        for tag_name, tag_spec in tags_section.items():
+            if isinstance(tag_spec, dict) and tag_spec.get("require_link") is True:
+                tags_requiring_link.add(tag_name)
 
-    logger.info(f"Loaded {len(allowed_tags)} allowed tags: {sorted(allowed_tags)}")
+    logger.info("Loaded %d allowed tags: %s", len(allowed_tags), sorted(allowed_tags))
+    if tags_requiring_link:
+        logger.info("Tags requiring links: %s", sorted(tags_requiring_link))
 
     # Validate transactions
     violations_count = 0
@@ -128,27 +142,39 @@ def check_valid_tags(
         if not isinstance(entry, data.Transaction):
             continue
 
-        # Check if transaction has tags
         if not entry.tags:
             continue
+
+        source = {
+            "filename": entry.meta.get("filename", "unknown"),
+            "lineno": entry.meta.get("lineno", 0),
+        }
 
         # Validate each tag
         for tag in entry.tags:
             if tag not in allowed_tags:
                 violations_count += 1
                 error = ParserError(
-                    source={
-                        "filename": entry.meta.get("filename", "unknown"),
-                        "lineno": entry.meta.get("lineno", 0),
-                    },
-                    message=(f"Undefined tag '#{tag}'"),
+                    source=source,
+                    message=f"Undefined tag '#{tag}'",
+                    entry=None,
+                )
+                errors.append(error)
+                continue
+
+            # Check link requirement
+            if tag in tags_requiring_link and not entry.links:
+                violations_count += 1
+                error = ParserError(
+                    source=source,
+                    message=f"Tag '#{tag}' requires a link (e.g., ^receipt-123)",
                     entry=None,
                 )
                 errors.append(error)
 
     # Log summary
     if violations_count > 0:
-        logger.warning(f"Found {violations_count} invalid tags")
+        logger.warning("Found %d tag validation errors", violations_count)
     else:
         logger.info("All transaction tags are valid")
 

@@ -108,13 +108,15 @@ If adding tests, follow these conventions based on .gitignore:
 ### For check_valid_tags
 - Reads allowed tags from `tags.yaml` configuration file
 - Validates all transaction tags against whitelist
-- Reports ParserErrors for undefined tags
+- Supports `require_link` per tag (transactions with that tag must have a link)
+- Reports ParserErrors for undefined tags and missing links
 
 ### For check_valid_metadata
 - Reads metadata schema from `metadata_schema.yaml` configuration file
 - Validates metadata keys and values against typed schema
 - Supports type constraints (string, int, bool, date, Decimal)
 - Supports required fields and allowed_values constraints
+- Supports `account_pattern` to scope required fields to matching accounts (regex)
 - Reports ParserErrors for schema violations
 
 ### For posting_tags

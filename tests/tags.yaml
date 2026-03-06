@@ -3,7 +3,7 @@ tags:
     label: "Expenses that may be tax-deductible"
   reimbursable:
     label: "Expenses to be reimbursed"
-    require_link: true  # Transactions with #reimbursable must have a link (e.g., ^receipt-123)
+    require_link: true
   travel:
     label: "Travel-related expenses"
   medical:

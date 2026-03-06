@@ -1,0 +1,120 @@
+; Sample ledger for plugin integration tests.
+; Each section is designed to exercise specific plugin behavior.
+
+option "title" "Test Ledger"
+option "operating_currency" "USD"
+
+; --- Plugin loading order matters ---
+plugin "beancount_plugins.posting_tags"
+plugin "beancount_plugins.check_missing_tags"
+plugin "beancount_plugins.check_valid_tags" "tags.yaml"
+plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"
+
+; === Account setup ===
+2026-01-01 open Assets:Checking
+2026-01-01 open Assets:Savings
+2026-01-01 open Expenses:Groceries
+    tag-expected: TRUE
+2026-01-01 open Expenses:Travel
+2026-01-01 open Expenses:Rent
+2026-01-01 open Liabilities:CreditCard
+    tag-expected: TRUE
+2026-01-01 open Income:Salary
+2026-01-01 open Equity:Opening-Balances
+2026-01-01 open Equity:ZeroSum:Transfers
+2026-01-01 open Expenses:Reimbursable
+
+; === Section 1: Valid transactions (no errors expected) ===
+
+; Valid: tagged transaction to tag-required account
+2026-01-05 * "Grocery store" #personal
+    source_payee: "Whole Foods"
+    Expenses:Groceries  50.00 USD
+    Assets:Checking    -50.00 USD
+
+; Valid: tagged transaction with posting-level tags (posting_tags plugin)
+2026-01-10 * "Split purchase"
+    Expenses:Groceries  30.00 USD
+        tags: "personal"
+    Expenses:Travel  20.00 USD
+        tags: "business"
+    Assets:Checking  -50.00 USD
+
+; Valid: reimbursable with a link
+2026-01-15 * "Business dinner" #reimbursable ^receipt-001
+    Expenses:Travel  75.00 USD
+    Liabilities:CreditCard  -75.00 USD
+
+; Valid: transaction to non-tag-required account, no tags needed
+2026-01-20 * "Rent payment"
+    Expenses:Rent  1200.00 USD
+    Assets:Checking  -1200.00 USD
+
+; === Section 2: check_missing_tags errors ===
+
+; ERROR: posting to tag-required Expenses:Groceries without tags
+2026-02-01 * "Untagged groceries"
+    Expenses:Groceries  40.00 USD
+    Assets:Checking  -40.00 USD
+
+; ERROR: posting to tag-required Liabilities:CreditCard without tags
+2026-02-02 * "Untagged credit card"
+    Liabilities:CreditCard  -60.00 USD
+    Assets:Checking  60.00 USD
+
+; === Section 3: check_valid_tags errors ===
+
+; ERROR: undefined tag
+2026-03-01 * "Bad tag" #nonexistent-tag
+    Expenses:Travel  100.00 USD
+    Assets:Checking  -100.00 USD
+
+; === Section 4: require_link errors ===
+
+; ERROR: #reimbursable without a link
+2026-04-01 * "Missing link" #reimbursable
+    Expenses:Travel  50.00 USD
+    Assets:Checking  -50.00 USD
+
+; === Section 5: check_valid_metadata errors ===
+
+; ERROR: unknown metadata key on posting
+2026-05-01 * "Unknown posting key" #personal
+    Expenses:Groceries  25.00 USD
+        unknown_key: "bad"
+    Assets:Checking  -25.00 USD
+
+; ERROR: invalid allowed_values for posting metadata
+2026-05-02 * "Bad tag value" #personal
+    Expenses:Groceries  30.00 USD
+        tag: "invalid-category"
+    Assets:Checking  -30.00 USD
+
+; ERROR: unknown transaction-level metadata key
+2026-05-03 * "Unknown txn key" #personal
+    bogus_field: "bad"
+    Expenses:Groceries  15.00 USD
+    Assets:Checking  -15.00 USD
+
+; === Section 6: account_pattern tests (receipt_id required on Expenses:Reimbursable only) ===
+
+; ERROR: posts to Expenses:Reimbursable, receipt_id required but missing
+2026-06-01 * "Reimbursable missing receipt" #reimbursable ^receipt-002
+    Expenses:Reimbursable  100.00 USD
+    Assets:Checking  -100.00 USD
+
+; NO ERROR: pattern doesn't match Assets accounts — receipt_id not required
+2026-06-02 * "Assets transfer"
+    Assets:Checking  -50.00 USD
+    Assets:Savings  50.00 USD
+
+; NO ERROR: posts to Expenses:Reimbursable with receipt_id provided
+2026-06-03 * "Reimbursable with receipt" #reimbursable ^receipt-003
+    receipt_id: "R-001"
+    Expenses:Reimbursable  200.00 USD
+    Assets:Checking  -200.00 USD
+
+; NO ERROR: posts to Expenses:Travel — pattern is exact, doesn't match
+2026-06-04 * "Travel no receipt needed" #travel
+    Expenses:Travel  80.00 USD
+    Assets:Checking  -80.00 USD

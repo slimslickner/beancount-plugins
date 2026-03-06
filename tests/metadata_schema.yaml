@@ -1,0 +1,31 @@
+metadata:
+  transaction:
+    source_payee:
+      label: "Original payee name from import"
+      type: string
+      required: false
+    receipt_id:
+      label: "Receipt reference for reimbursable expenses"
+      type: string
+      required: true
+      account_pattern: "Expenses:Reimbursable"
+
+  posting:
+    tag:
+      label: "Posting-level categorization"
+      type: string
+      allowed_values: [personal, business, reimbursable]
+      required: false
+    tags:
+      label: "Space-separated posting tags"
+      type: string
+      required: false
+
+  open:
+    tag-expected:
+      label: "If true, transactions posting to this account require tags"
+      type: bool
+
+  plugin_exceptions:
+    - allowed_prefix: "_"
+    - allowed_keys: [predicted_payee, matched_transfer_account, matched_transfer_date]

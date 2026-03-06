@@ -58,7 +58,6 @@ __copyright__ = "Copyright (C) 2026 slimslickner"
 __license__ = "GNU GPLv2"
 
 import logging
-from typing import Tuple
 
 from beancount.core import data
 
@@ -128,7 +127,7 @@ def zerosum_transaction_matcher(
     entries: data.Entries,
     options_map: dict,
     config: str | None = None,
-) -> Tuple[data.Entries, list[str]]:
+) -> tuple[data.Entries, list[str]]:
     """Match transfer postings to their counterparty accounts.
 
     Builds an index of all transfers for O(1) lookups instead of querying
