@@ -4,13 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Python package providing custom plugins for **Beancount**, a text-based accounting system. The package contains five plugins:
+This is a Python package providing custom plugins for **Beancount**, a text-based accounting system. The package contains four plugins:
 
-1. **zerosum_transaction_matcher** - Automatically matches and enriches transfer postings between accounts with metadata
-2. **check_missing_tags** - Validates that transactions have required tags based on account configuration
-3. **check_valid_tags** - Validates transaction tags against an allowed whitelist
-4. **check_valid_metadata** - Validates metadata keys and values against a typed schema
-5. **posting_tags** - Enables per-posting tag granularity via 'tags' metadata on postings
+1. **check_missing_tags** - Validates that transactions have required tags based on account configuration
+2. **check_valid_tags** - Validates transaction tags against an allowed whitelist
+3. **check_valid_metadata** - Validates metadata keys and values against a typed schema
+4. **posting_tags** - Enables per-posting tag granularity via 'tags' metadata on postings
 
 The plugins are designed to be loaded into a Beancount ledger file and process transactions at load time.
 
@@ -25,7 +24,6 @@ Most plugins follow a two-phase architecture:
 
 ### Phase 2: Processing
 - Plugins process transactions and either:
-  - Add metadata to postings (zerosum_transaction_matcher)
   - Report validation errors (check_missing_tags, check_valid_tags, check_valid_metadata, posting_tags)
 
 **Key Insight**: This pattern allows plugins to operate efficiently without nested lookups.
@@ -55,9 +53,6 @@ All three commands must complete with zero errors before committing changes. If 
 ## Important Files
 
 - **`beancount_plugins/__init__.py`** - Package entry point with plugin documentation
-- **`beancount_plugins/zerosum_transaction_matcher.py`** - Transfer matching plugin
-  - Key function: `zerosum_transaction_matcher()` - main plugin entry point
-  - Uses ZeroSum links created by Beancount's built-in zerosum plugin
 - **`beancount_plugins/check_missing_tags.py`** - Tag validation plugin
   - Key function: `check_missing_tags()` - main plugin entry point
   - Scans Open directives for `tag-expected: True` metadata
@@ -79,7 +74,6 @@ There are currently no automated test files in the repository. To test the plugi
 1. Create a test Beancount ledger file that uses the plugins:
    ```beancount
    plugin "beancount_plugins.posting_tags"
-   plugin "beancount_plugins.zerosum_transaction_matcher"
    plugin "beancount_plugins.check_missing_tags"
    plugin "beancount_plugins.check_valid_tags"
    plugin "beancount_plugins.check_valid_metadata"
@@ -94,11 +88,6 @@ If adding tests, follow these conventions based on .gitignore:
 - Command to run: `pytest tests/`
 
 ## Plugin Integration Points
-
-### For zerosum_transaction_matcher
-- Requires Beancount's built-in `zerosum` plugin to be loaded first
-- Reads ZeroSum links from the zerosum plugin's metadata
-- Adds metadata to `Equity:ZeroSum` postings
 
 ### For check_missing_tags
 - Reads `tag-expected: True` metadata from Open directives
