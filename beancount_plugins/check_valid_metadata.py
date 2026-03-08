@@ -262,7 +262,7 @@ def check_valid_metadata(
                 if isinstance(exception["allowed_keys"], list):
                     allowed_exception_keys.update(exception["allowed_keys"])
 
-    logger.info(
+    logger.debug(
         "Loaded metadata schema: %d keys across %d directive types",
         sum(len(s) for s in directive_schemas.values()),
         len([s for s in directive_schemas.values() if s]),
@@ -375,7 +375,7 @@ def check_valid_metadata(
     if violations_count > 0:
         logger.warning("Found %d metadata validation errors", violations_count)
     else:
-        logger.info("All metadata is valid")
+        logger.debug("All metadata is valid")
 
     return entries, errors
 

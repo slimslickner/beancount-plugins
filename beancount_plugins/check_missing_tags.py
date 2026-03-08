@@ -126,7 +126,7 @@ def check_missing_tags(
                         )
                     )
 
-    logger.info(f"Found {len(tag_required_accounts)} accounts requiring tags")
+    logger.debug(f"Found {len(tag_required_accounts)} accounts requiring tags")
 
     # Log summary
     if violations_count > 0:
@@ -134,6 +134,6 @@ def check_missing_tags(
             f"Found {violations_count} postings to tag-required accounts without tags"
         )
     else:
-        logger.info("All postings to tag-required accounts are properly tagged")
+        logger.debug("All postings to tag-required accounts are properly tagged")
 
     return entries, errors

@@ -124,6 +124,6 @@ def posting_tags(
 
         new_entries.append(entry)
 
-    logger.info(f"Promoted posting tags on {promoted_count} transactions")
+    logger.debug(f"Promoted posting tags on {promoted_count} transactions")
 
     return new_entries, errors

@@ -131,9 +131,9 @@ def check_valid_tags(
             if isinstance(tag_spec, dict) and tag_spec.get("require_link") is True:
                 tags_requiring_link.add(tag_name)
 
-    logger.info("Loaded %d allowed tags: %s", len(allowed_tags), sorted(allowed_tags))
+    logger.debug("Loaded %d allowed tags: %s", len(allowed_tags), sorted(allowed_tags))
     if tags_requiring_link:
-        logger.info("Tags requiring links: %s", sorted(tags_requiring_link))
+        logger.debug("Tags requiring links: %s", sorted(tags_requiring_link))
 
     # Validate transactions
     violations_count = 0
@@ -176,6 +176,6 @@ def check_valid_tags(
     if violations_count > 0:
         logger.warning("Found %d tag validation errors", violations_count)
     else:
-        logger.info("All transaction tags are valid")
+        logger.debug("All transaction tags are valid")
 
     return entries, errors
