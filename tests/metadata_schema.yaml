@@ -9,6 +9,15 @@ metadata:
       type: string
       required: true
       account_pattern: "Expenses:Reimbursable"
+    ref_code:
+      label: "Reference code following format REF-NNN"
+      type: string
+      pattern: "REF-[0-9]+"
+      required: false
+    is_billable:
+      label: "Whether transaction is billable to a client"
+      type: bool
+      required: false
 
   posting:
     tag:
@@ -20,11 +29,23 @@ metadata:
       label: "Space-separated posting tags"
       type: string
       required: false
+    cost_center:
+      label: "Cost center for billable postings"
+      type: string
+      required: true
+      account_pattern: "Expenses:Billable"
+      allowed_values: [engineering, marketing, ops]
 
   open:
     tag-expected:
       label: "If true, transactions posting to this account require tags"
       type: bool
+    tax-account-type:
+      label: "Tax character of the account"
+      type: string
+      required: true
+      account_pattern: "Assets:Investment.*"
+      allowed_values: [taxable, traditional, roth, hsa, pension]
 
   plugin_exceptions:
     - allowed_prefix: "_"

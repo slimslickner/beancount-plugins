@@ -73,25 +73,11 @@ All three commands must complete with zero errors before committing changes. If 
 
 ## How to Test
 
-There are currently no automated test files in the repository. To test the plugins:
+Tests are in the `tests/` directory and use pytest.
 
-### Option 1: Manual Testing with Beancount CLI
-1. Create a test Beancount ledger file that uses the plugins:
-   ```beancount
-   plugin "beancount_plugins.posting_tags"
-   plugin "beancount_plugins.zerosum_transaction_matcher"
-   plugin "beancount_plugins.check_missing_tags"
-   plugin "beancount_plugins.check_valid_tags"
-   plugin "beancount_plugins.check_valid_metadata"
-   ```
-2. Run: `bean-check your-ledger.beancount`
-3. The plugins will process your transactions and report any errors
-
-### Option 2: Add Unit Tests
-If adding tests, follow these conventions based on .gitignore:
-- Use pytest (pytest cache patterns are already in .gitignore)
-- Test files should be in a `tests/` directory
-- Command to run: `pytest tests/`
+```bash
+pytest tests/
+```
 
 ## Plugin Integration Points
 

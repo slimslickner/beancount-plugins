@@ -13,10 +13,14 @@ plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"
 ; === Account setup ===
 2026-01-01 open Assets:Checking
 2026-01-01 open Assets:Savings
+2026-01-01 open Assets:Investment:Brokerage
+2026-01-01 open Assets:Investment:IRA
+  tax-account-type: "roth"
 2026-01-01 open Expenses:Groceries
     tag-expected: TRUE
 2026-01-01 open Expenses:Travel
 2026-01-01 open Expenses:Rent
+2026-01-01 open Expenses:Billable
 2026-01-01 open Liabilities:CreditCard
     tag-expected: TRUE
 2026-01-01 open Income:Salary
@@ -118,3 +122,58 @@ plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"
 2026-06-04 * "Travel no receipt needed" #travel
     Expenses:Travel  80.00 USD
     Assets:Checking  -80.00 USD
+
+; === Section 7: account_pattern on Open directives ===
+; (Assets:Investment:Brokerage above is missing tax-account-type → ERROR)
+; (Assets:Investment:IRA above has tax-account-type: roth → NO ERROR)
+; (Assets:Checking above doesn't match account_pattern → NO ERROR)
+
+; === Section 8: required posting metadata (cost_center on Expenses:Billable) ===
+
+; ERROR: posts to Expenses:Billable without cost_center
+2026-07-01 * "Billable without cost center"
+    Expenses:Billable  50.00 USD
+    Assets:Checking  -50.00 USD
+
+; NO ERROR: cost_center provided on the posting
+2026-07-02 * "Billable with cost center"
+    Expenses:Billable  50.00 USD
+        cost_center: "engineering"
+    Assets:Checking  -50.00 USD
+
+; === Section 9: pattern constraint (ref_code must match REF-[0-9]+) ===
+
+; ERROR: ref_code doesn't match pattern
+2026-08-01 * "Bad ref code"
+    ref_code: "INVALID"
+    Expenses:Travel  20.00 USD
+    Assets:Checking  -20.00 USD
+
+; NO ERROR: valid ref_code
+2026-08-02 * "Good ref code"
+    ref_code: "REF-123"
+    Expenses:Travel  20.00 USD
+    Assets:Checking  -20.00 USD
+
+; === Section 10: type constraint (is_billable must be bool) ===
+
+; ERROR: is_billable is a string, expected bool
+2026-09-01 * "Wrong type metadata"
+    is_billable: "yes"
+    Expenses:Travel  20.00 USD
+    Assets:Checking  -20.00 USD
+
+; === Section 11: Close, Event, Note, Commodity directives (branch coverage) ===
+
+2026-01-01 commodity USD
+2026-01-01 event "location" "Home"
+2026-01-01 note Assets:Checking "Account setup"
+2026-12-31 close Assets:Savings
+
+; === Section 12: posting_tags — non-string tags value ===
+
+; ERROR: tags metadata must be a string
+2026-10-01 * "Non-string posting tags"
+    Expenses:Travel  30.00 USD
+        tags: 123
+    Assets:Checking  -30.00 USD
