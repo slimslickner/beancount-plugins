@@ -284,11 +284,12 @@ def check_valid_metadata(
 
         # Check for missing required directive-level metadata
         present_keys = set(entry.meta.keys()) - _SYSTEM_KEYS if entry.meta else set()
-        accounts = (
-            [p.account for p in entry.postings]
-            if isinstance(entry, data.Transaction)
-            else []
-        )
+        if isinstance(entry, data.Transaction):
+            accounts = [p.account for p in entry.postings]
+        elif isinstance(entry, (data.Open, data.Close, data.Document)):
+            accounts = [entry.account]
+        else:
+            accounts = []
         for req_key, req_spec in required_specs[directive_type].items():
             if req_key in present_keys:
                 continue

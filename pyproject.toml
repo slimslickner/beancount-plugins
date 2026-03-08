@@ -34,3 +34,8 @@ Repository = "https://github.com/slimslickner/beancount-plugins"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["beancount_plugins*"]
+
+[dependency-groups]
+dev = [
+    "pytest-cov>=7.0.0",
+]

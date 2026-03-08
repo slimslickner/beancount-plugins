@@ -46,6 +46,10 @@ class TestPostingTags:
         groceries = _find_posting(txn, "Expenses:Groceries")
         assert groceries.meta is not None and groceries.meta["tags"] == "personal"
 
+    def test_non_string_tags_error(self, error_messages):
+        """Posting 'tags' with a non-string value should produce an error."""
+        assert any("must be a string" in m for m in error_messages)
+
 
 # ---------------------------------------------------------------------------
 # check_missing_tags plugin
@@ -105,6 +109,15 @@ class TestCheckValidTags:
         assert any("'#reimbursable' requires a link" in m for m in error_messages)
 
 
+def test_check_valid_tags_missing_config(tmp_path):
+    """Missing tags config file should produce a descriptive error."""
+    from beancount_plugins.check_valid_tags import check_valid_tags
+
+    options_map = {"filename": str(tmp_path / "test.beancount")}
+    _, errors = check_valid_tags([], options_map, config="nonexistent.yaml")
+    assert any("not found" in e.message for e in errors)
+
+
 # ---------------------------------------------------------------------------
 # check_valid_metadata plugin
 # ---------------------------------------------------------------------------
@@ -131,22 +144,39 @@ class TestCheckValidMetadata:
             "bogus_field" in m and "Invalid metadata key" in m for m in error_messages
         )
 
+    def test_pattern_constraint_violation(self, error_messages):
+        """ref_code value not matching pattern should produce a format error."""
+        assert any(
+            "does not match pattern" in m and "ref_code" in m for m in error_messages
+        )
+
+    def test_pattern_constraint_valid_passes(self, error_messages):
+        """ref_code matching pattern REF-123 should not error."""
+        assert not any("REF-123" in m for m in error_messages)
+
+    def test_type_constraint_violation(self, error_messages):
+        """is_billable set to a string instead of bool should produce a type error."""
+        assert any("Invalid type" in m and "is_billable" in m for m in error_messages)
+
+
+def test_check_valid_metadata_missing_config(tmp_path):
+    """Missing metadata schema file should produce a descriptive error."""
+    from beancount_plugins.check_valid_metadata import check_valid_metadata
+
+    options_map = {"filename": str(tmp_path / "test.beancount")}
+    _, errors = check_valid_metadata([], options_map, config="nonexistent.yaml")
+    assert any("not found" in e.message for e in errors)
+
 
 # ---------------------------------------------------------------------------
 # account_pattern (scoped required metadata)
 # ---------------------------------------------------------------------------
 
 
-class TestAccountPattern:
-    """Test account_pattern scoping for required metadata fields.
+class TestTransactionAccountPattern:
+    """account_pattern on transaction-level required fields.
 
-    The schema (tests/metadata_schema.yaml) declares receipt_id as required
-    with account_pattern "Expenses:Reimbursable". Three transactions in
-    sample.beancount exercise this:
-      - "Reimbursable missing receipt": posts to Expenses:Reimbursable, no receipt_id → ERROR
-      - "Assets transfer": posts only to Assets → NO ERROR
-      - "Reimbursable with receipt": posts to Expenses:Reimbursable, receipt_id provided → NO ERROR
-      - "Travel no receipt needed": posts to Expenses:Travel (pattern is exact, no match) → NO ERROR
+    receipt_id is required only when a posting matches "Expenses:Reimbursable".
     """
 
     def test_pattern_match_triggers_requirement(self, error_messages):
@@ -156,11 +186,7 @@ class TestAccountPattern:
         )
 
     def test_only_one_receipt_id_error(self, error_messages):
-        """Exactly one receipt_id error: only the missing-receipt transaction fires.
-
-        This proves that non-matching accounts (Assets, Expenses:Travel) and
-        the satisfied transaction do not produce spurious errors.
-        """
+        """Exactly one receipt_id error: only the missing-receipt transaction fires."""
         count = sum(
             1 for m in error_messages if "Missing required metadata 'receipt_id'" in m
         )
@@ -168,12 +194,75 @@ class TestAccountPattern:
 
     def test_satisfied_pattern_no_error(self, error_messages):
         """No receipt_id error when field is provided on the matching transaction."""
-        # Verified indirectly by test_only_one_receipt_id_error — only the
-        # missing-receipt transaction fires, not "Reimbursable with receipt".
         count = sum(
             1 for m in error_messages if "Missing required metadata 'receipt_id'" in m
         )
         assert count == 1  # would be 2 if the satisfied transaction also fired
+
+
+class TestOpenAccountPattern:
+    """account_pattern on Open directive required fields.
+
+    tax-account-type is required only on accounts matching "Assets:Investment.*".
+    """
+
+    def test_missing_field_triggers_error(self, error_messages):
+        """tax-account-type missing on Assets:Investment:Brokerage should error."""
+        assert any(
+            "Missing required metadata 'tax-account-type'" in m for m in error_messages
+        )
+
+    def test_only_one_error(self, error_messages):
+        """Exactly one error: Brokerage is missing it; IRA provides it; Checking doesn't match."""
+        count = sum(
+            1
+            for m in error_messages
+            if "Missing required metadata 'tax-account-type'" in m
+        )
+        assert count == 1
+
+    def test_satisfied_open_no_error(self, error_messages):
+        """Assets:Investment:IRA with tax-account-type provided should not error."""
+        # Verified indirectly: count == 1 means IRA (provided) didn't fire.
+        count = sum(
+            1
+            for m in error_messages
+            if "Missing required metadata 'tax-account-type'" in m
+        )
+        assert count == 1
+
+    def test_non_matching_account_no_error(self, error_messages):
+        """Assets:Checking doesn't match account_pattern, no error expected."""
+        assert not any(
+            "tax-account-type" in m and "Checking" in m for m in error_messages
+        )
+
+
+class TestPostingAccountPattern:
+    """account_pattern on posting-level required fields.
+
+    cost_center is required only on postings to "Expenses:Billable".
+    """
+
+    def test_missing_cost_center_error(self, error_messages):
+        """Posting to Expenses:Billable without cost_center should error."""
+        assert any(
+            "Missing required metadata 'cost_center'" in m for m in error_messages
+        )
+
+    def test_only_one_cost_center_error(self, error_messages):
+        """Exactly one error: only the posting without cost_center fires."""
+        count = sum(
+            1 for m in error_messages if "Missing required metadata 'cost_center'" in m
+        )
+        assert count == 1
+
+    def test_satisfied_posting_no_error(self, error_messages):
+        """Posting to Expenses:Billable with cost_center provided should not error."""
+        count = sum(
+            1 for m in error_messages if "Missing required metadata 'cost_center'" in m
+        )
+        assert count == 1  # would be 2 if the satisfied posting also fired
 
 
 # ---------------------------------------------------------------------------
