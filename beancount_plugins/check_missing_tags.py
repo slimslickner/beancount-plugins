@@ -97,49 +97,36 @@ def check_missing_tags(
     """
     errors = []
 
-    # Phase 1: Build index of accounts requiring tags
-    tag_required_accounts = set()
-    for entry in entries:
-        if isinstance(entry, data.Open):
-            # Check if the account has tag-expected metadata set to True
-            if entry.meta and entry.meta.get("tag-expected") is True:
-                tag_required_accounts.add(entry.account)
-
-    logger.info(f"Found {len(tag_required_accounts)} accounts requiring tags")
-
-    # Phase 2: Process transactions and generate errors for violations
+    # Single pass: collect tag-required accounts from Open directives (which always
+    # precede Transactions in Beancount's sorted entry list), then validate transactions.
+    tag_required_accounts: set[str] = set()
     violations_count = 0
 
     for entry in entries:
-        if not isinstance(entry, data.Transaction):
-            continue
+        if isinstance(entry, data.Open):
+            if entry.meta and entry.meta.get("tag-expected") is True:
+                tag_required_accounts.add(entry.account)
+        elif isinstance(entry, data.Transaction):
+            if entry.tags:
+                continue
+            for posting in entry.postings:
+                if posting.account in tag_required_accounts:
+                    violations_count += 1
+                    errors.append(
+                        ParserError(
+                            source={
+                                "filename": entry.meta.get("filename", "unknown"),
+                                "lineno": entry.meta.get("lineno", 0),
+                            },
+                            message=(
+                                f"Posting to tag-required account '{posting.account}' "
+                                f"missing tags: {entry.narration}"
+                            ),
+                            entry=None,
+                        )
+                    )
 
-        # Check if transaction has tags
-        has_tags = bool(entry.tags)
-
-        if has_tags:
-            # Transaction has tags, no violations possible
-            continue
-
-        # Transaction lacks tags - check postings for violations
-        for posting in entry.postings:
-            if posting.account in tag_required_accounts:
-                # Violation found - create error
-                violations_count += 1
-
-                # Create error with proper location information
-                error = ParserError(
-                    source={
-                        "filename": entry.meta.get("filename", "unknown"),
-                        "lineno": entry.meta.get("lineno", 0),
-                    },
-                    message=(
-                        f"Posting to tag-required account '{posting.account}' "
-                        f"missing tags: {entry.narration}"
-                    ),
-                    entry=None,
-                )
-                errors.append(error)
+    logger.info(f"Found {len(tag_required_accounts)} accounts requiring tags")
 
     # Log summary
     if violations_count > 0:

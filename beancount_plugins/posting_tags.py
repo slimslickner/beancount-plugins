@@ -82,6 +82,7 @@ def posting_tags(
     """
     errors: list[ParserError] = []
     new_entries: list[data.Directive] = []
+    promoted_count = 0
 
     for entry in entries:
         if not isinstance(entry, data.Transaction):
@@ -119,15 +120,10 @@ def posting_tags(
             # Promote: union of existing transaction tags + posting tags
             new_tags = (entry.tags or frozenset()) | frozenset(posting_tags)
             entry = entry._replace(tags=new_tags)
+            promoted_count += 1
 
         new_entries.append(entry)
 
-    promoted_count = sum(
-        1
-        for e in new_entries
-        if isinstance(e, data.Transaction)
-        and any(p.meta and "tags" in p.meta for p in e.postings)
-    )
     logger.info(f"Promoted posting tags on {promoted_count} transactions")
 
     return new_entries, errors
