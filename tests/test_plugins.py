@@ -84,6 +84,33 @@ class TestCheckMissingTags:
 
 
 # ---------------------------------------------------------------------------
+# check_missing_links plugin
+# ---------------------------------------------------------------------------
+
+
+class TestCheckMissingLinks:
+    def test_linked_transaction_passes(self, error_messages):
+        """A linked transaction to a link-required account should not error."""
+        assert not any(
+            "Invoice payment received" in m and "missing link" in m
+            for m in error_messages
+        )
+
+    def test_unlinked_ar_error(self, error_messages):
+        """Unlinked transaction posting to link-required Assets:AccountsReceivable."""
+        assert any(
+            "Assets:AccountsReceivable" in m and "missing link" in m
+            for m in error_messages
+        )
+
+    def test_non_link_required_account_no_error(self, error_messages):
+        """Transaction to non-link-required Income:Salary should not error."""
+        assert not any(
+            "Income:Salary" in m and "missing link" in m for m in error_messages
+        )
+
+
+# ---------------------------------------------------------------------------
 # check_valid_tags plugin
 # ---------------------------------------------------------------------------
 

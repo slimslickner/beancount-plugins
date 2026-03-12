@@ -7,6 +7,7 @@ option "operating_currency" "USD"
 ; --- Plugin loading order matters ---
 plugin "beancount_plugins.posting_tags"
 plugin "beancount_plugins.check_missing_tags"
+plugin "beancount_plugins.check_missing_links"
 plugin "beancount_plugins.check_valid_tags" "tags.yaml"
 plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"
 
@@ -27,6 +28,8 @@ plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"
 2026-01-01 open Equity:Opening-Balances
 2026-01-01 open Equity:ZeroSum:Transfers
 2026-01-01 open Expenses:Reimbursable
+2026-01-01 open Assets:AccountsReceivable
+    link-expected: TRUE
 
 ; === Section 1: Valid transactions (no errors expected) ===
 
@@ -177,3 +180,20 @@ plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"
     Expenses:Travel  30.00 USD
         tags: 123
     Assets:Checking  -30.00 USD
+
+; === Section 13: check_missing_links ===
+
+; ERROR: posting to link-required account without a link
+2026-11-01 * "Invoice sent"
+    Assets:AccountsReceivable  500.00 USD
+    Income:Consulting          -500.00 USD
+
+; NO ERROR: link provided
+2026-11-02 * "Invoice payment received" ^inv-2026-001
+    Assets:AccountsReceivable  -500.00 USD
+    Assets:Checking             500.00 USD
+
+; NO ERROR: non-link-required account, no link needed
+2026-11-03 * "Salary deposit"
+    Assets:Checking   3000.00 USD
+    Income:Salary    -3000.00 USD
