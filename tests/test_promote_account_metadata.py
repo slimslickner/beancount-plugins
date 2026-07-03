@@ -27,15 +27,29 @@ def test_parse_config_empty_string():
     assert errors == []
 
 
-def test_parse_config_whitelist():
-    whitelist, blacklist, errors = _parse_config('{"whitelist": ["tax-treatment"]}')
+def test_parse_config_whitelist_list():
+    whitelist, blacklist, errors = _parse_config("{'whitelist': ['tax-treatment']}")
     assert whitelist == {"tax-treatment"}
     assert blacklist is None
     assert errors == []
 
 
-def test_parse_config_blacklist():
-    whitelist, blacklist, errors = _parse_config('{"blacklist": ["tag-expected"]}')
+def test_parse_config_whitelist_string():
+    whitelist, blacklist, errors = _parse_config("{'whitelist': 'tax-treatment'}")
+    assert whitelist == {"tax-treatment"}
+    assert blacklist is None
+    assert errors == []
+
+
+def test_parse_config_blacklist_list():
+    whitelist, blacklist, errors = _parse_config("{'blacklist': ['tag-expected']}")
+    assert whitelist is None
+    assert blacklist == {"tag-expected"}
+    assert errors == []
+
+
+def test_parse_config_blacklist_string():
+    whitelist, blacklist, errors = _parse_config("{'blacklist': 'tag-expected'}")
     assert whitelist is None
     assert blacklist == {"tag-expected"}
     assert errors == []
@@ -43,23 +57,30 @@ def test_parse_config_blacklist():
 
 def test_parse_config_both_whitelist_wins():
     whitelist, blacklist, errors = _parse_config(
-        '{"whitelist": ["a"], "blacklist": ["b"]}'
+        "{'whitelist': ['a'], 'blacklist': ['b']}"
     )
     assert whitelist == {"a"}
     assert blacklist is None
     assert errors == []
 
 
-def test_parse_config_invalid_json():
-    whitelist, blacklist, errors = _parse_config("not-json")
+def test_parse_config_multiline():
+    config = "{\n    'whitelist': 'tax-treatment'\n}"
+    whitelist, blacklist, errors = _parse_config(config)
+    assert whitelist == {"tax-treatment"}
+    assert errors == []
+
+
+def test_parse_config_invalid_syntax():
+    whitelist, blacklist, errors = _parse_config("not valid python")
     assert whitelist is None
     assert blacklist is None
     assert len(errors) == 1
-    assert "Invalid JSON" in errors[0].message
+    assert "Invalid config" in errors[0].message
 
 
 def test_parse_config_unknown_keys():
-    whitelist, blacklist, errors = _parse_config('{"unknown_key": []}')
+    whitelist, blacklist, errors = _parse_config("{'unknown_key': []}")
     assert len(errors) == 1
     assert "unknown_key" in errors[0].message
 
@@ -179,7 +200,7 @@ class TestFilters:
         assert posting.meta.get("internal-note") == "ignore-me"
 
     def test_whitelist_only_promotes_listed_keys(self):
-        config = ' "{\\"whitelist\\": [\\"tax-treatment\\"]}"'
+        config = " \"{'whitelist': 'tax-treatment'}\""
         entries, _, _ = loader.load_string(_MULTI_KEY_LEDGER.format(config=config))
         txn = _find_txn(entries, "Work expense")
         posting = _find_posting(txn, "Expenses:Work")
@@ -188,7 +209,7 @@ class TestFilters:
         assert "internal-note" not in posting.meta
 
     def test_blacklist_excludes_listed_keys(self):
-        config = ' "{\\"blacklist\\": [\\"internal-note\\"]}"'
+        config = " \"{'blacklist': 'internal-note'}\""
         entries, _, _ = loader.load_string(_MULTI_KEY_LEDGER.format(config=config))
         txn = _find_txn(entries, "Work expense")
         posting = _find_posting(txn, "Expenses:Work")
@@ -197,10 +218,7 @@ class TestFilters:
         assert "internal-note" not in posting.meta
 
     def test_whitelist_wins_when_both_provided(self):
-        config = (
-            ' "{\\"whitelist\\": [\\"tax-treatment\\"],'
-            ' \\"blacklist\\": [\\"tax-treatment\\"]}"'
-        )
+        config = " \"{'whitelist': 'tax-treatment', 'blacklist': 'tax-treatment'}\""
         entries, _, _ = loader.load_string(_MULTI_KEY_LEDGER.format(config=config))
         txn = _find_txn(entries, "Work expense")
         posting = _find_posting(txn, "Expenses:Work")

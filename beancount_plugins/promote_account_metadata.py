@@ -18,20 +18,34 @@ Load before any metadata validation plugins (e.g. check_valid_metadata):
 
     plugin "beancount_plugins.promote_account_metadata"
 
-OPTIONAL CONFIG (inline JSON string in the plugin declaration):
+OPTIONAL CONFIG (Python dict literal, supports multi-line):
 
-    ; Promote only specific keys:
-    plugin "beancount_plugins.promote_account_metadata" "{\"whitelist\": [\"tax-treatment\"]}"
+    ; No config — promote all metadata keys:
+    plugin "beancount_plugins.promote_account_metadata"
+
+    ; Promote only specific keys (string or list):
+    plugin "beancount_plugins.promote_account_metadata" "{
+        'whitelist': 'tax-treatment'
+    }"
+
+    plugin "beancount_plugins.promote_account_metadata" "{
+        'whitelist': ['tax-treatment', 'cost-center']
+    }"
 
     ; Promote all keys except specific ones:
-    plugin "beancount_plugins.promote_account_metadata" "{\"blacklist\": [\"tag-expected\", \"link-expected\"]}"
+    plugin "beancount_plugins.promote_account_metadata" "{
+        'blacklist': ['tag-expected', 'link-expected']
+    }"
 
-    ; If both whitelist and blacklist are provided, whitelist wins:
-    plugin "beancount_plugins.promote_account_metadata" "{\"whitelist\": [\"a\"], \"blacklist\": [\"b\"]}"
+    ; If both provided, whitelist wins:
+    plugin "beancount_plugins.promote_account_metadata" "{
+        'whitelist': ['tax-treatment'],
+        'blacklist': ['tag-expected']
+    }"
 
 CONFIG KEYS:
-- whitelist: list of key names — only these keys will be promoted
-- blacklist: list of key names — these keys will be excluded from promotion
+- whitelist: string or list of key names — only these keys will be promoted
+- blacklist: string or list of key names — these keys will be excluded from promotion
 - If both provided, whitelist wins and blacklist is ignored
 - If neither provided, all metadata keys (except system keys) are promoted
 
@@ -66,7 +80,7 @@ metadata_schema.yaml, otherwise they will be flagged as unknown.
 __copyright__ = "Copyright (C) 2026 slimslickner"
 __license__ = "GNU GPLv2"
 
-import json
+import ast
 import logging
 from typing import Any
 
@@ -80,10 +94,21 @@ __plugins__ = ("promote_account_metadata",)
 _SYSTEM_KEYS: frozenset[str] = frozenset({"filename", "lineno"})
 
 
+def _to_key_set(value: str | list[str]) -> set[str]:
+    """Normalize a string or list of strings to a set of keys."""
+    if isinstance(value, str):
+        return {value}
+    return set(value)
+
+
 def _parse_config(
     config: str | None,
 ) -> tuple[set[str] | None, set[str] | None, list[ParserError]]:
-    """Parse inline JSON config string into whitelist and blacklist sets.
+    """Parse Python-literal config string into whitelist and blacklist sets.
+
+    Accepts Python dict syntax — single or double quotes, string or list values:
+        {'whitelist': 'tax-treatment'}
+        {'blacklist': ['tag-expected', 'link-expected']}
 
     Returns (whitelist, blacklist, errors). If whitelist is present, blacklist is
     always None (whitelist wins). On parse error returns (None, None, [error]).
@@ -92,15 +117,15 @@ def _parse_config(
         return None, None, []
 
     try:
-        config_data: dict[str, Any] = json.loads(config)
-    except json.JSONDecodeError as e:
+        config_data: dict[str, Any] = ast.literal_eval(config)
+    except (ValueError, SyntaxError) as e:
         return (
             None,
             None,
             [
                 ParserError(
                     source={"filename": "plugin config", "lineno": 0},
-                    message=f"promote_account_metadata: Invalid JSON config: {e}",
+                    message=f"promote_account_metadata: Invalid config: {e}",
                     entry=None,
                 )
             ],
@@ -127,9 +152,9 @@ def _parse_config(
     blacklist: set[str] | None = None
 
     if "whitelist" in config_data:
-        whitelist = set(config_data["whitelist"])
+        whitelist = _to_key_set(config_data["whitelist"])
     elif "blacklist" in config_data:
-        blacklist = set(config_data["blacklist"])
+        blacklist = _to_key_set(config_data["blacklist"])
 
     return whitelist, blacklist, []
 
