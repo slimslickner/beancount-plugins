@@ -186,6 +186,33 @@ class TestCheckValidMetadata:
         assert any("Invalid type" in m and "is_billable" in m for m in error_messages)
 
 
+# ---------------------------------------------------------------------------
+# promote_account_metadata plugin
+# ---------------------------------------------------------------------------
+
+
+class TestPromoteAccountMetadata:
+    def test_metadata_promoted_to_matching_posting(self, transactions):
+        """tax-treatment from Open directive should appear on the matching posting."""
+        txn = _find_txn(transactions, "Tax withholding")
+        posting = _find_posting(txn, "Expenses:TaxWithheld")
+        assert (
+            posting.meta is not None and posting.meta.get("tax-treatment") == "pre-tax"
+        )
+
+    def test_metadata_not_on_other_posting_in_same_txn(self, transactions):
+        """Checking posting in the same txn should not receive tax-treatment."""
+        txn = _find_txn(transactions, "Tax withholding")
+        posting = _find_posting(txn, "Assets:Checking")
+        assert posting.meta is None or "tax-treatment" not in posting.meta
+
+    def test_account_without_open_metadata_unaffected(self, transactions):
+        """Posting to an account with no Open metadata should be unchanged."""
+        txn = _find_txn(transactions, "General no-meta expense")
+        posting = _find_posting(txn, "Expenses:NoMeta")
+        assert posting.meta is None or "tax-treatment" not in posting.meta
+
+
 def test_check_valid_metadata_missing_config(tmp_path):
     """Missing metadata schema file should produce a descriptive error."""
     from beancount_plugins.check_valid_metadata import check_valid_metadata

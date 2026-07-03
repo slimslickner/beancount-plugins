@@ -35,11 +35,19 @@ metadata:
       required: true
       account_pattern: "Expenses:Billable"
       allowed_values: [engineering, marketing, ops]
+    tax-treatment:
+      label: "Tax treatment promoted from account Open directive"
+      type: string
+      required: false
 
   open:
     tag-expected:
       label: "If true, transactions posting to this account require tags"
       type: bool
+    tax-treatment:
+      label: "Tax treatment applied to this account's transactions"
+      type: string
+      required: false
     tax-account-type:
       label: "Tax character of the account"
       type: string
