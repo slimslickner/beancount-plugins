@@ -6,6 +6,11 @@ import pytest
 from beancount import loader
 from beancount.core import data
 
+from beancount_plugins.check_valid_metadata import (
+    _account_pattern_matches,
+    _compile_spec,
+)
+
 SAMPLE_LEDGER = Path(__file__).parent / "sample.beancount"
 
 
@@ -317,6 +322,91 @@ class TestPostingAccountPattern:
             1 for m in error_messages if "Missing required metadata 'cost_center'" in m
         )
         assert count == 1  # would be 2 if the satisfied posting also fired
+
+
+class TestAccountPatternPrefixMatch:
+    """account_pattern should match from the start of the account name.
+
+    A pattern like "^(Assets|Liabilities|...)" must apply to nested accounts
+    (e.g., Assets:Investment:Retirement:...), not only exact root names.
+    """
+
+    def test_prefix_open_pattern_requires_label(self, tmp_path):
+        """A deeply nested Assets account missing 'label' should produce an error."""
+        schema = tmp_path / "metadata_schema.yaml"
+        schema.write_text(
+            "metadata:\n"
+            "  open:\n"
+            "    label:\n"
+            "      type: string\n"
+            "      required: true\n"
+            '      account_pattern: "^(Assets|Liabilities|Equity|Income|Expenses)"\n'
+        )
+        ledger = tmp_path / "test.beancount"
+        ledger.write_text(
+            'option "title" "Prefix pattern test"\n'
+            'option "operating_currency" "USD"\n'
+            'plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"\n'
+            "\n"
+            '2024-01-01 open Assets:Investment:Retirement:Mattis-Fidelity-Roth-IRA:FXAIX FXAIX "FIFO"\n'
+            "  fava-uptodate-indication: TRUE\n"
+            '  account-owner: "matti"\n'
+            '  tax-account-type: "roth"\n'
+        )
+        _, errors, _ = loader.load_file(str(ledger))
+        assert any("Missing required metadata 'label'" in e.message for e in errors)
+
+    def test_non_matching_root_account_no_label_error(self, tmp_path):
+        """An account that does not match the prefix should not require label."""
+        schema = tmp_path / "metadata_schema.yaml"
+        schema.write_text(
+            "metadata:\n"
+            "  open:\n"
+            "    label:\n"
+            "      type: string\n"
+            "      required: true\n"
+            '      account_pattern: "^(Assets|Liabilities|Equity|Income|Expenses)"\n'
+        )
+        ledger = tmp_path / "test.beancount"
+        ledger.write_text(
+            'option "title" "Prefix pattern test"\n'
+            'option "operating_currency" "USD"\n'
+            'plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"\n'
+            "\n"
+            "2024-01-01 open Foo:Bar USD\n"
+        )
+        _, errors, _ = loader.load_file(str(ledger))
+        assert not any("Missing required metadata 'label'" in e.message for e in errors)
+
+
+class TestAccountPatternBoundary:
+    """Unit tests for account_pattern matching semantics."""
+
+    def test_prefix_matches_subaccounts(self):
+        """A root prefix should match itself and any nested account."""
+        spec = {"required": True, "account_pattern": "Expenses"}
+        compiled = _compile_spec(spec)
+        assert _account_pattern_matches(compiled, ["Expenses:Groceries"])
+        assert _account_pattern_matches(compiled, ["Expenses"])
+        assert not _account_pattern_matches(compiled, ["ExpensesChase"])
+
+    def test_wildcard_pattern_still_works(self):
+        """A colon + wildcard pattern should match any account under that prefix."""
+        spec = {"required": True, "account_pattern": "Expenses:.*"}
+        compiled = _compile_spec(spec)
+        assert _account_pattern_matches(compiled, ["Expenses:Groceries"])
+        assert _account_pattern_matches(compiled, ["Expenses:Reimbursable:Client"])
+        assert not _account_pattern_matches(compiled, ["Income:Salary"])
+
+    def test_alternation_respects_component_boundaries(self):
+        """Alternations must match whole components, not partial names."""
+        spec = {"required": True, "account_pattern": "^(Expenses|Liabilities:Loans)"}
+        compiled = _compile_spec(spec)
+        assert _account_pattern_matches(compiled, ["Expenses"])
+        assert _account_pattern_matches(compiled, ["Expenses:Groceries"])
+        assert _account_pattern_matches(compiled, ["Liabilities:Loans"])
+        assert _account_pattern_matches(compiled, ["Liabilities:Loans:Chase"])
+        assert not _account_pattern_matches(compiled, ["Liabilities:LoansChase"])
 
 
 # ---------------------------------------------------------------------------

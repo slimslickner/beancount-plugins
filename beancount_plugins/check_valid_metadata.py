@@ -96,11 +96,18 @@ SCHEMA SPECIFICATION:
    - pattern: (string) Regex pattern for string values only
 
 3. ACCOUNT PATTERN:
-   When account_pattern is set on a required field:
-   - For transaction-level metadata: required only if ANY posting account matches
-   - For posting-level metadata: required only if the specific posting account matches
-   - Uses re.fullmatch() for exact matching (e.g., "Expenses:.*" matches all Expenses)
-   - If account_pattern is not set, the field is universally required
+    When account_pattern is set on a required field:
+    - For transaction-level metadata: required only if ANY posting account matches
+    - For posting-level metadata: required only if the specific posting account matches
+    - Uses re.match() so the pattern matches from the start of the account name
+      up to a whole account-component boundary (before a ':' or end of string).
+      Examples:
+      - "Expenses" matches "Expenses" and "Expenses:Groceries",
+        but not "ExpensesChase"
+      - "^(Expenses|Liabilities:Loans)" matches "Expenses",
+        "Expenses:Groceries", "Liabilities:Loans", and "Liabilities:Loans:Chase",
+        but not "Liabilities:LoansChase"
+    - If account_pattern is not set, the field is universally required
 
 4. PLUGIN EXCEPTIONS:
    - allowed_prefix: Any key starting with this is skipped (e.g., "_" for internal Beancount keys)
@@ -444,7 +451,9 @@ def _account_pattern_matches(spec: dict, accounts: list[str]) -> bool:
     """Check if any account matches the spec's account_pattern.
 
     If the spec has no account_pattern, returns True (universally required).
-    Otherwise, returns True only if at least one account matches the pattern.
+    Otherwise, returns True if at least one account matches the pattern from
+    the start of the account name up to a whole account-component boundary
+    (end of string or just before a ':').
 
     Args:
         spec: Compiled schema spec dict; account_pattern is a re.Pattern or absent
@@ -456,7 +465,16 @@ def _account_pattern_matches(spec: dict, accounts: list[str]) -> bool:
     pattern: re.Pattern | None = spec.get("account_pattern")
     if not pattern:
         return True
-    return any(pattern.fullmatch(account) for account in accounts)
+    for account in accounts:
+        match = pattern.match(account)
+        if not match:
+            continue
+        # The matched prefix must end at a whole component, not in the
+        # middle of an account component like 'Liabilities:LoansChase'.
+        end = match.end()
+        if end == len(account) or account[end] == ":":
+            return True
+    return False
 
 
 def _get_directive_context(entry: data.Directive, directive_type: str) -> str:

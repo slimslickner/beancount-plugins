@@ -102,7 +102,7 @@ pytest tests/
 - Validates metadata keys and values against typed schema
 - Supports type constraints (string, int, bool, date, Decimal)
 - Supports required fields and allowed_values constraints
-- Supports `account_pattern` to scope required fields to matching accounts (regex)
+- Supports `account_pattern` to scope required fields to matching accounts (regex, matched from the start of the account name)
 - Reports ParserErrors for schema violations
 
 ### For posting_tags
