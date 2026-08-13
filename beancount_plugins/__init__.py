@@ -57,11 +57,36 @@ INCLUDED PLUGINS:
      (e.g. Assets:Checking <-> Assets:Savings — narration is enough)
    Usage: plugin "beancount_plugins.transfer_remove_payee"
 
+8. missing_contribution_year
+   - Flags retirement contributions that lack a `contribution-year` key on
+     the RECEIVING posting (the destination) — needed for grouping
+     contributions by tax year
+   - Tags matched transactions with #missing-contribution-year and sets flag to '!'
+   - The contribution-year metadata must be on the destination posting, NOT
+     on the transaction — this allows per-destination year tracking in
+     multi-account transactions.
+   - Requires a "counterparty" posting (employer contribution, transfer from
+     checking, ZeroSum-matched transfer) to qualify — random asset movements
+     don't count
+   - PRIMARY mode is exact account match (destination_accounts) — no regex
+     foot-guns, O(1) lookups. Regex patterns (destination_patterns) are a
+     fallback for convention-based matching. When destination_accounts is
+     set (non-empty), default patterns are replaced.
+   - Load-time validation: explicitly-configured accounts must have an Open
+     directive (or an ancestor component must). Typos in config produce
+     ParserErrors instead of silently failing to flag transactions.
+   Usage: plugin "beancount_plugins.missing_contribution_year"
+   Usage: plugin "beancount_plugins.missing_contribution_year" "{
+       'destination_accounts': ['Assets:Retirement:401k:Cash'],
+       'counterparty_accounts': ['Income:CapTech:Employer-Contribution']
+   }"
+
 INTEGRATION:
 Add plugins to your main ledger file as needed (order matters):
 
     plugin "beancount_plugins.posting_tags"
     plugin "beancount_plugins.transfer_remove_payee"
+    plugin "beancount_plugins.missing_contribution_year"
     plugin "beancount_plugins.zerosum_transaction_matcher"
     plugin "beancount_plugins.check_missing_tags"
     plugin "beancount_plugins.check_missing_links"
@@ -75,6 +100,10 @@ See individual plugin modules for detailed configuration options and examples:
 - posting_tags: no config required
 - transfer_remove_payee: no config required; if combined with check_valid_tags,
   add 'transfer-remove-payee' to tags.yaml
+- missing_contribution_year: inline dict overrides destination_accounts,
+  destination_patterns, and/or counterparty_accounts. Explicit destination_accounts
+  replaces default patterns (no silent regex fallback). Explicitly-configured
+  accounts are validated against Open directives.
 - check_valid_tags requires: tags.yaml
 - check_valid_metadata requires: metadata_schema.yaml
 """

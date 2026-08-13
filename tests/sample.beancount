@@ -10,6 +10,7 @@ plugin "beancount_plugins.promote_account_metadata" "{
 }"
 plugin "beancount_plugins.posting_tags"
 plugin "beancount_plugins.transfer_remove_payee"
+plugin "beancount_plugins.missing_contribution_year"
 plugin "beancount_plugins.check_missing_tags"
 plugin "beancount_plugins.check_missing_links"
 plugin "beancount_plugins.check_valid_tags" "tags.yaml"
@@ -39,6 +40,11 @@ plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"
 2026-01-01 open Expenses:NoMeta USD
 2026-01-01 open Assets:Receivable:ClientInc
 2026-01-01 open Expenses:Refund
+2026-01-01 open Assets:Retirement:HSA:Cash
+2026-01-01 open Assets:Retirement:401k:Cash
+2026-01-01 open Assets:Retirement:IRA:Vanguard
+2026-01-01 open Equity:ZeroSumMatched:Transfers
+2026-01-01 open Income:CapTech:Employer-Contribution
 
 ; === Section 1: Valid transactions (no errors expected) ===
 
@@ -245,3 +251,38 @@ plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"
 2026-12-14 * "Client Inc" "Invoice payment"
     Assets:Receivable:ClientInc  -500.00 USD
     Assets:Checking              500.00 USD
+
+; === Section 16: missing_contribution_year ===
+
+; FLAG: HSA contribution from default counterparty, no contribution-year
+2026-12-20 * "HSA contribution from matched transfer"
+    Assets:Retirement:HSA:Cash       1000.00 USD
+    Equity:ZeroSumMatched:Transfers -1000.00 USD
+
+; NO FLAG: same structure, but contribution-year is set on the destination posting
+2026-12-21 * "HSA contribution with year"
+    Assets:Retirement:HSA:Cash       1000.00 USD
+        contribution-year: "2026"
+    Equity:ZeroSumMatched:Transfers -1000.00 USD
+
+; FLAG: contribution-year is on the transaction (wrong place) — still flagged
+; because the receiving posting lacks it. Demonstrates the meta-on-posting rule.
+2026-12-25 * "HSA contribution with year on wrong place"
+    contribution-year: "2026"
+    Assets:Retirement:HSA:Cash       1000.00 USD
+    Equity:ZeroSumMatched:Transfers -1000.00 USD
+
+; NO FLAG: HSA posting but counterparty is not in the list (random asset)
+2026-12-22 * "HSA move from checking"
+    Assets:Retirement:HSA:Cash   500.00 USD
+    Assets:Checking             -500.00 USD
+
+; FLAG: 401k from employer contribution, no contribution-year
+2026-12-23 * "401k employer match"
+    Assets:Retirement:401k:Cash           2000.00 USD
+    Income:CapTech:Employer-Contribution -2000.00 USD
+
+; NO FLAG: IRA destination but counterparty is just an Assets sibling
+2026-12-24 * "IRA rebalance"
+    Assets:Retirement:IRA:Vanguard   300.00 USD
+    Assets:Checking                -300.00 USD

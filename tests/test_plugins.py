@@ -257,6 +257,53 @@ class TestTransferRemovePayee:
         assert "transfer-remove-payee" not in txn.tags
 
 
+# ---------------------------------------------------------------------------
+# missing_contribution_year plugin
+# ---------------------------------------------------------------------------
+
+
+class TestMissingContributionYear:
+    def test_default_hsa_counterparty_flagged(self, transactions):
+        """HSA + default counterparty, no contribution-year → flagged."""
+        txn = _find_txn(transactions, "HSA contribution from matched transfer")
+        assert "missing-contribution-year" in txn.tags
+        assert txn.flag == "!"
+
+    def test_existing_contribution_year_not_flagged(self, transactions):
+        """contribution-year on the destination posting → not flagged."""
+        txn = _find_txn(transactions, "HSA contribution with year")
+        assert "missing-contribution-year" not in txn.tags
+        assert txn.flag == "*"
+
+    def test_contribution_year_on_transaction_still_flagged(self, transactions):
+        """contribution-year on the transaction (wrong place) is NOT honored.
+
+        The meta must be on the receiving posting. A transaction-level
+        contribution-year is ignored — the posting still lacks it.
+        """
+        txn = _find_txn(transactions, "HSA contribution with year on wrong place")
+        assert "missing-contribution-year" in txn.tags
+        assert txn.flag == "!"
+
+    def test_hsa_no_counterparty_not_flagged(self, transactions):
+        """HSA + random asset (not in counterparty list) → not flagged."""
+        txn = _find_txn(transactions, "HSA move from checking")
+        assert "missing-contribution-year" not in txn.tags
+        assert txn.flag == "*"
+
+    def test_401k_employer_contribution_flagged(self, transactions):
+        """401k + employer contribution, no contribution-year → flagged."""
+        txn = _find_txn(transactions, "401k employer match")
+        assert "missing-contribution-year" in txn.tags
+        assert txn.flag == "!"
+
+    def test_ira_no_counterparty_not_flagged(self, transactions):
+        """IRA + random asset (not in counterparty list) → not flagged."""
+        txn = _find_txn(transactions, "IRA rebalance")
+        assert "missing-contribution-year" not in txn.tags
+        assert txn.flag == "*"
+
+
 def test_check_valid_metadata_missing_config(tmp_path):
     """Missing metadata schema file should produce a descriptive error."""
     from beancount_plugins.check_valid_metadata import check_valid_metadata
