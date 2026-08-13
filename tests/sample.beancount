@@ -9,6 +9,7 @@ plugin "beancount_plugins.promote_account_metadata" "{
     'whitelist': 'tax-treatment'
 }"
 plugin "beancount_plugins.posting_tags"
+plugin "beancount_plugins.transfer_remove_payee"
 plugin "beancount_plugins.check_missing_tags"
 plugin "beancount_plugins.check_missing_links"
 plugin "beancount_plugins.check_valid_tags" "tags.yaml"
@@ -36,6 +37,8 @@ plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"
 2026-01-01 open Expenses:TaxWithheld USD
   tax-treatment: "pre-tax"
 2026-01-01 open Expenses:NoMeta USD
+2026-01-01 open Assets:Receivable:ClientInc
+2026-01-01 open Expenses:Refund
 
 ; === Section 1: Valid transactions (no errors expected) ===
 
@@ -215,3 +218,30 @@ plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"
 2026-12-02 * "General no-meta expense"
     Expenses:NoMeta   50.00 USD
     Assets:Checking  -50.00 USD
+
+; === Section 15: transfer_remove_payee ===
+
+; NO FLAG: pure transfer between siblings, no payee
+2026-12-10 * "Move to savings"
+    Assets:Checking  -500.00 USD
+    Assets:Savings    500.00 USD
+
+; FLAG: payee set on transfer with different parents — should be tagged/flagged
+2026-12-11 * "Bank A" "Transfer to brokerage"
+    Assets:Checking              -1000.00 USD
+    Assets:Investment:Brokerage   1000.00 USD
+
+; NO FLAG: payee on transfer where all postings share one parent (Checking <-> Savings)
+2026-12-12 * "Bank A" "Move to savings"
+    Assets:Checking  -300.00 USD
+    Assets:Savings     300.00 USD
+
+; NO FLAG: payee on transaction that mixes transfer and non-transfer accounts
+2026-12-13 * "Vendor Inc" "Refund issued"
+    Expenses:Refund   100.00 USD
+    Assets:Checking  -100.00 USD
+
+; NO FLAG: Assets:Receivable: legitimately uses payees (AR / invoicing)
+2026-12-14 * "Client Inc" "Invoice payment"
+    Assets:Receivable:ClientInc  -500.00 USD
+    Assets:Checking              500.00 USD

@@ -218,6 +218,45 @@ class TestPromoteAccountMetadata:
         assert posting.meta is None or "tax-treatment" not in posting.meta
 
 
+# ---------------------------------------------------------------------------
+# transfer_remove_payee plugin
+# ---------------------------------------------------------------------------
+
+
+class TestTransferRemovePayee:
+    def test_transfer_with_payee_different_parents_tagged(self, transactions):
+        """Transfer with payee and distinct immediate parents gets the tag and flag."""
+        txn = _find_txn(transactions, "Transfer to brokerage")
+        assert "transfer-remove-payee" in txn.tags
+        assert txn.flag == "!"
+
+    def test_pure_transfer_no_payee_unchanged(self, transactions):
+        """Pure transfer (siblings, no payee) keeps the * flag and gets no tag."""
+        txn = _find_txn(transactions, "Move to savings")
+        assert txn.flag == "*"
+        assert "transfer-remove-payee" not in txn.tags
+
+    def test_transfer_same_parent_with_payee_unchanged(self, transactions):
+        """Checking<->Savings (same parent) with a payee is not flagged."""
+        txn = _find_txn(transactions, "Move to savings")
+        # The narration is shared with the no-payee case; the second one has a payee
+        # and should remain unchanged.
+        assert txn.flag == "*"
+        assert "transfer-remove-payee" not in txn.tags
+
+    def test_mixed_transfer_and_expense_not_flagged(self, transactions):
+        """Transaction mixing transfer and Expenses: is not flagged."""
+        txn = _find_txn(transactions, "Refund issued")
+        assert txn.flag == "*"
+        assert "transfer-remove-payee" not in txn.tags
+
+    def test_receivable_with_payee_not_flagged(self, transactions):
+        """Assets:Receivable: with a payee is excluded (AR uses payees for invoices)."""
+        txn = _find_txn(transactions, "Invoice payment")
+        assert txn.flag == "*"
+        assert "transfer-remove-payee" not in txn.tags
+
+
 def test_check_valid_metadata_missing_config(tmp_path):
     """Missing metadata schema file should produce a descriptive error."""
     from beancount_plugins.check_valid_metadata import check_valid_metadata

@@ -48,10 +48,20 @@ INCLUDED PLUGINS:
    - Reports errors for invalid tags metadata values
    Usage: plugin "beancount_plugins.posting_tags"
 
+7. transfer_remove_payee
+   - Flags transactions that look like transfers (between Assets/Liabilities/Equity
+     accounts) but have a payee set — almost always a mistake
+   - Tags matched transactions with #transfer-remove-payee and sets the flag to '!'
+   - Excludes Assets:Receivable:* (AR legitimately uses payees for invoices)
+   - Skips transfers where all postings share the same immediate parent
+     (e.g. Assets:Checking <-> Assets:Savings — narration is enough)
+   Usage: plugin "beancount_plugins.transfer_remove_payee"
+
 INTEGRATION:
 Add plugins to your main ledger file as needed (order matters):
 
     plugin "beancount_plugins.posting_tags"
+    plugin "beancount_plugins.transfer_remove_payee"
     plugin "beancount_plugins.zerosum_transaction_matcher"
     plugin "beancount_plugins.check_missing_tags"
     plugin "beancount_plugins.check_missing_links"
@@ -63,6 +73,8 @@ Each plugin can be used independently based on your needs.
 CONFIGURATION:
 See individual plugin modules for detailed configuration options and examples:
 - posting_tags: no config required
+- transfer_remove_payee: no config required; if combined with check_valid_tags,
+  add 'transfer-remove-payee' to tags.yaml
 - check_valid_tags requires: tags.yaml
 - check_valid_metadata requires: metadata_schema.yaml
 """
