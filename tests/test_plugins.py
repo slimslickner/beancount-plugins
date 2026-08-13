@@ -224,37 +224,40 @@ class TestPromoteAccountMetadata:
 
 
 class TestTransferRemovePayee:
-    def test_transfer_with_payee_different_parents_tagged(self, transactions):
-        """Transfer with payee and distinct immediate parents gets the tag and flag."""
-        txn = _find_txn(transactions, "Transfer to brokerage")
-        assert "transfer-remove-payee" in txn.tags
-        assert txn.flag == "!"
+    def test_transfer_with_payee_errors(self, error_messages):
+        """Transfer with payee and distinct immediate parents produces an error."""
+        assert any(
+            "Transfer transaction has a payee" in m and "Transfer to brokerage" in m
+            for m in error_messages
+        )
 
-    def test_pure_transfer_no_payee_unchanged(self, transactions):
-        """Pure transfer (siblings, no payee) keeps the * flag and gets no tag."""
-        txn = _find_txn(transactions, "Move to savings")
-        assert txn.flag == "*"
-        assert "transfer-remove-payee" not in txn.tags
+    def test_pure_transfer_no_error(self, error_messages):
+        """Pure transfer (siblings, no payee) produces no error."""
+        assert not any(
+            "Transfer transaction has a payee" in m and "Move to savings" in m
+            for m in error_messages
+        )
 
-    def test_transfer_same_parent_with_payee_unchanged(self, transactions):
+    def test_transfer_same_parent_no_error(self, error_messages):
         """Checking<->Savings (same parent) with a payee is not flagged."""
-        txn = _find_txn(transactions, "Move to savings")
-        # The narration is shared with the no-payee case; the second one has a payee
-        # and should remain unchanged.
-        assert txn.flag == "*"
-        assert "transfer-remove-payee" not in txn.tags
+        assert not any(
+            "Transfer transaction has a payee" in m and "Bank A" in m
+            for m in error_messages
+        )
 
-    def test_mixed_transfer_and_expense_not_flagged(self, transactions):
-        """Transaction mixing transfer and Expenses: is not flagged."""
-        txn = _find_txn(transactions, "Refund issued")
-        assert txn.flag == "*"
-        assert "transfer-remove-payee" not in txn.tags
+    def test_mixed_transfer_and_expense_no_error(self, error_messages):
+        """Transaction mixing transfer and Expenses: produces no error."""
+        assert not any(
+            "Transfer transaction has a payee" in m and "Refund issued" in m
+            for m in error_messages
+        )
 
-    def test_receivable_with_payee_not_flagged(self, transactions):
+    def test_receivable_with_payee_no_error(self, error_messages):
         """Assets:Receivable: with a payee is excluded (AR uses payees for invoices)."""
-        txn = _find_txn(transactions, "Invoice payment")
-        assert txn.flag == "*"
-        assert "transfer-remove-payee" not in txn.tags
+        assert not any(
+            "Transfer transaction has a payee" in m and "Invoice payment" in m
+            for m in error_messages
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -263,45 +266,50 @@ class TestTransferRemovePayee:
 
 
 class TestMissingContributionYear:
-    def test_default_hsa_counterparty_flagged(self, transactions):
-        """HSA + default counterparty, no contribution-year → flagged."""
-        txn = _find_txn(transactions, "HSA contribution from matched transfer")
-        assert "missing-contribution-year" in txn.tags
-        assert txn.flag == "!"
+    def test_default_hsa_counterparty_errors(self, error_messages):
+        """HSA + default counterparty, no contribution-year → error."""
+        assert any(
+            "missing 'contribution-year'" in m
+            and "HSA contribution from matched transfer" in m
+            for m in error_messages
+        )
 
-    def test_existing_contribution_year_not_flagged(self, transactions):
-        """contribution-year on the destination posting → not flagged."""
-        txn = _find_txn(transactions, "HSA contribution with year")
-        assert "missing-contribution-year" not in txn.tags
-        assert txn.flag == "*"
+    def test_existing_contribution_year_no_error(self, error_messages):
+        """contribution-year on the destination posting → no error."""
+        assert not any(
+            "missing 'contribution-year'" in m
+            and "HSA contribution with year on posting" in m
+            for m in error_messages
+        )
 
-    def test_contribution_year_on_transaction_still_flagged(self, transactions):
-        """contribution-year on the transaction (wrong place) is NOT honored.
+    def test_contribution_year_on_transaction_errors(self, error_messages):
+        """contribution-year on the transaction (wrong place) still errors."""
+        assert any(
+            "missing 'contribution-year'" in m
+            and "HSA contribution with year on txn" in m
+            for m in error_messages
+        )
 
-        The meta must be on the receiving posting. A transaction-level
-        contribution-year is ignored — the posting still lacks it.
-        """
-        txn = _find_txn(transactions, "HSA contribution with year on wrong place")
-        assert "missing-contribution-year" in txn.tags
-        assert txn.flag == "!"
+    def test_hsa_no_counterparty_no_error(self, error_messages):
+        """HSA + random asset (not in counterparty list) → no error."""
+        assert not any(
+            "missing 'contribution-year'" in m and "HSA move from checking" in m
+            for m in error_messages
+        )
 
-    def test_hsa_no_counterparty_not_flagged(self, transactions):
-        """HSA + random asset (not in counterparty list) → not flagged."""
-        txn = _find_txn(transactions, "HSA move from checking")
-        assert "missing-contribution-year" not in txn.tags
-        assert txn.flag == "*"
+    def test_401k_employer_contribution_errors(self, error_messages):
+        """401k + employer contribution, no contribution-year → error."""
+        assert any(
+            "missing 'contribution-year'" in m and "401k employer match" in m
+            for m in error_messages
+        )
 
-    def test_401k_employer_contribution_flagged(self, transactions):
-        """401k + employer contribution, no contribution-year → flagged."""
-        txn = _find_txn(transactions, "401k employer match")
-        assert "missing-contribution-year" in txn.tags
-        assert txn.flag == "!"
-
-    def test_ira_no_counterparty_not_flagged(self, transactions):
-        """IRA + random asset (not in counterparty list) → not flagged."""
-        txn = _find_txn(transactions, "IRA rebalance")
-        assert "missing-contribution-year" not in txn.tags
-        assert txn.flag == "*"
+    def test_ira_no_counterparty_no_error(self, error_messages):
+        """IRA + random asset (not in counterparty list) → no error."""
+        assert not any(
+            "missing 'contribution-year'" in m and "IRA rebalance" in m
+            for m in error_messages
+        )
 
 
 def test_check_valid_metadata_missing_config(tmp_path):

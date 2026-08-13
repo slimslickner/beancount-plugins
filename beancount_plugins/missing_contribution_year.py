@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Beancount plugin to flag contributions missing a contribution-year metadata.
+"""Beancount plugin to error on contributions missing a contribution-year metadata.
 
-Retirement contributions should carry a `contribution-year` metadata key so
-downstream queries can group contributions by tax year. This plugin flags any
-such contribution that arrives without that key, so bean-check (or a manual
-review) can prompt the user to set it.
+Retirement contributions should carry a `contribution-year` metadata key on
+the receiving posting so downstream queries can group contributions by tax
+year. This plugin errors on any contribution that arrives without that key,
+so bean-check (and any other loader) refuses to load the ledger until fixed.
 
 WHAT IT DOES:
 - Identifies transactions that match ALL of these criteria:
@@ -17,8 +17,7 @@ WHAT IT DOES:
   - The qualifying destination posting does NOT carry `contribution-year` as
     posting-level metadata. (The year lives on the *receiving posting*, not on
     the transaction itself, so per-destination contributions can be queried.)
-- Tags matched transactions with #missing-contribution-year.
-- Changes the transaction flag to '!' so bean-check surfaces them.
+- Emits a ParserError for each violation with the transaction's file/line.
 
 EXACT-MATCH VS REGEX:
 destination_accounts is the PRIMARY way to specify destinations — explicit,
@@ -29,7 +28,7 @@ explicitly. An empty destination_accounts list (`[]`) leaves pattern defaults
 in place.
 
 USAGE:
-In your main ledger file (load BEFORE check_valid_tags so the new tag is allowed):
+In your main ledger file:
 
     plugin "beancount_plugins.missing_contribution_year"
 
@@ -109,21 +108,13 @@ Defaults are NOT validated — they're trusted. To get full validation, set
 both keys explicitly (even if to the same values as defaults).
 
 EXAMPLE:
-Before:
+The following transaction causes a load error:
 
     2026-01-15 * "Employer match"
         Assets:Retirement:401k:Cash               1000 USD
         Income:CapTech:Employer-Contribution     -1000 USD
 
-After:
-
-    2026-01-15 ! "Employer match" #missing-contribution-year
-        Assets:Retirement:401k:Cash               1000 USD
-        Income:CapTech:Employer-Contribution     -1000 USD
-
-The contribution-year metadata lives on the RECEIVING POSTING (not on the
-transaction), so contributions to multiple accounts in one transaction can
-each carry their own year:
+Fix by adding contribution-year on the receiving posting:
 
     2026-01-15 * "Employer match"
         Assets:Retirement:401k:Cash               1000 USD
@@ -157,8 +148,6 @@ _DEFAULT_COUNTERPARTY_ACCOUNTS: tuple[str, ...] = (
     "Income:LMTSD:Employer-Contribution",
     "Income:CapTech:Employer-Contribution",
 )
-_TAG_NAME: str = "missing-contribution-year"
-_PENDING_FLAG: str = "!"
 _META_KEY: str = "contribution-year"
 
 _ALLOWED_KEYS: frozenset[str] = frozenset(
@@ -421,7 +410,7 @@ def missing_contribution_year(
     options_map: dict,
     config: str | None = None,
 ) -> Tuple[data.Entries, list[ParserError]]:
-    """Flag and tag contributions missing contribution-year on the receiving posting.
+    """Emit ParserErrors for contributions missing contribution-year on the posting.
 
     Args:
         entries: List of beancount entries
@@ -431,7 +420,7 @@ def missing_contribution_year(
                 counterparty_accounts
 
     Returns:
-        Tuple of (modified_entries, errors)
+        Tuple of (entries_unchanged, errors)
     """
     (
         destination_accounts,
@@ -450,29 +439,33 @@ def missing_contribution_year(
 
     destination_accounts_set = frozenset(destination_accounts)
     counterparty_set = frozenset(counterparty_accounts)
-    new_entries: list[data.Directive] = []
-    flagged_count = 0
 
     for entry in entries:
         if not isinstance(entry, data.Transaction):
-            new_entries.append(entry)
             continue
 
-        if not _missing_contribution_year_on(
+        if _missing_contribution_year_on(
             entry, destination_accounts_set, destination_patterns, counterparty_set
         ):
-            new_entries.append(entry)
-            continue
+            errors.append(
+                ParserError(
+                    source={
+                        "filename": entry.meta.get("filename", "unknown"),
+                        "lineno": entry.meta.get("lineno", 0),
+                    },
+                    message=(
+                        f"Contribution missing '{_META_KEY}' on the receiving "
+                        f"posting: {entry.narration}"
+                    ),
+                    entry=None,
+                )
+            )
 
-        new_tags = (entry.tags or frozenset()) | frozenset({_TAG_NAME})
-        new_entry = entry._replace(flag=_PENDING_FLAG, tags=new_tags)
-        new_entries.append(new_entry)
-        flagged_count += 1
+    if len(errors) > len(config_errors):
+        logger.warning(
+            "missing_contribution_year: %d contribution(s) missing %s",
+            len(errors) - len(config_errors),
+            _META_KEY,
+        )
 
-    logger.debug(
-        "missing_contribution_year: flagged %d contribution(s) missing %s",
-        flagged_count,
-        _META_KEY,
-    )
-
-    return new_entries, errors
+    return entries, errors

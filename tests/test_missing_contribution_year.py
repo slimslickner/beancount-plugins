@@ -173,12 +173,15 @@ plugin "beancount_plugins.missing_contribution_year"
 """
 
 
-def _find_txn(entries, narration):
-    return next(
-        e
-        for e in entries
-        if isinstance(e, data.Transaction) and e.narration == narration
-    )
+def _plugin_errors(ledger):
+    """Return plugin error messages from loading the given ledger."""
+    _, errors, _ = loader.load_string(ledger)
+    return [e.message for e in errors if "missing 'contribution-year'" in e.message]
+
+
+def _has_error_for(errors, narration):
+    """True if any plugin error mentions this narration."""
+    return any(narration in e for e in errors)
 
 
 class TestDefaultBehavior:
@@ -193,13 +196,11 @@ class TestDefaultBehavior:
     Equity:ZeroSumMatched:Transfers -1000 USD
 """
         )
-        entries, _, _ = loader.load_string(ledger)
-        txn = _find_txn(entries, "HSA contribution")
-        assert "missing-contribution-year" in txn.tags
-        assert txn.flag == "!"
+        errors = _plugin_errors(ledger)
+        assert _has_error_for(errors, "HSA contribution")
 
     def test_contribution_year_on_posting_skipped(self):
-        """contribution-year on the destination posting → not flagged."""
+        """contribution-year on the destination posting → no error."""
         ledger = (
             _BASE_LEDGER
             + """
@@ -209,12 +210,10 @@ class TestDefaultBehavior:
     Equity:ZeroSumMatched:Transfers -1000 USD
 """
         )
-        entries, _, _ = loader.load_string(ledger)
-        txn = _find_txn(entries, "HSA with year on posting")
-        assert "missing-contribution-year" not in txn.tags
-        assert txn.flag == "*"
+        errors = _plugin_errors(ledger)
+        assert not _has_error_for(errors, "HSA with year on posting")
 
-    def test_contribution_year_on_transaction_still_flagged(self):
+    def test_contribution_year_on_transaction_errors(self):
         """contribution-year on the transaction (not on the posting) is ignored."""
         ledger = (
             _BASE_LEDGER
@@ -225,12 +224,10 @@ class TestDefaultBehavior:
     Equity:ZeroSumMatched:Transfers -1000 USD
 """
         )
-        entries, _, _ = loader.load_string(ledger)
-        txn = _find_txn(entries, "HSA with year on txn")
-        assert "missing-contribution-year" in txn.tags
-        assert txn.flag == "!"
+        errors = _plugin_errors(ledger)
+        assert _has_error_for(errors, "HSA with year on txn")
 
-    def test_contribution_year_on_counterparty_posting_still_flagged(self):
+    def test_contribution_year_on_counterparty_posting_errors(self):
         """contribution-year on the wrong posting (not the destination) is ignored."""
         ledger = (
             _BASE_LEDGER
@@ -241,10 +238,8 @@ class TestDefaultBehavior:
         contribution-year: "2026"
 """
         )
-        entries, _, _ = loader.load_string(ledger)
-        txn = _find_txn(entries, "Year on the wrong posting")
-        assert "missing-contribution-year" in txn.tags
-        assert txn.flag == "!"
+        errors = _plugin_errors(ledger)
+        assert _has_error_for(errors, "Year on the wrong posting")
 
     def test_non_matching_counterparty_skipped(self):
         ledger = (
@@ -255,10 +250,8 @@ class TestDefaultBehavior:
     Assets:Banking:Checking     -500 USD
 """
         )
-        entries, _, _ = loader.load_string(ledger)
-        txn = _find_txn(entries, "HSA from random")
-        assert "missing-contribution-year" not in txn.tags
-        assert txn.flag == "*"
+        errors = _plugin_errors(ledger)
+        assert not _has_error_for(errors, "HSA from random")
 
     def test_destination_not_in_default_patterns_skipped(self):
         """Account 'Assets:Retirement:CustomPlan' doesn't match HSA/401k/IRA/DC."""
@@ -271,12 +264,10 @@ class TestDefaultBehavior:
     Equity:ZeroSumMatched:Transfers -500 USD
 """
         )
-        entries, _, _ = loader.load_string(ledger)
-        txn = _find_txn(entries, "Custom plan contribution")
-        assert "missing-contribution-year" not in txn.tags
-        assert txn.flag == "*"
+        errors = _plugin_errors(ledger)
+        assert not _has_error_for(errors, "Custom plan contribution")
 
-    def test_employer_contribution_flagged(self):
+    def test_employer_contribution_errors(self):
         ledger = (
             _BASE_LEDGER
             + """
@@ -285,12 +276,10 @@ class TestDefaultBehavior:
     Income:CapTech:Employer-Contribution     -1000 USD
 """
         )
-        entries, _, _ = loader.load_string(ledger)
-        txn = _find_txn(entries, "401k employer match")
-        assert "missing-contribution-year" in txn.tags
-        assert txn.flag == "!"
+        errors = _plugin_errors(ledger)
+        assert _has_error_for(errors, "401k employer match")
 
-    def test_no_destination_not_flagged(self):
+    def test_no_destination_no_error(self):
         ledger = (
             _BASE_LEDGER
             + """
@@ -299,35 +288,25 @@ class TestDefaultBehavior:
     Assets:Banking:Checking -100 USD
 """
         )
-        entries, _, _ = loader.load_string(ledger)
-        txn = _find_txn(entries, "Groceries")
-        assert "missing-contribution-year" not in txn.tags
-        assert txn.flag == "*"
+        errors = _plugin_errors(ledger)
+        assert not _has_error_for(errors, "Groceries")
 
-    def test_no_ledger_errors(self):
+    def test_clean_ledger_no_errors(self):
         ledger = (
             _BASE_LEDGER
             + """
 2026-01-15 * "Clean HSA"
     Assets:Retirement:HSA:Cash       1000 USD
+        contribution-year: "2026"
     Equity:ZeroSumMatched:Transfers -1000 USD
 """
         )
-        _, errors, _ = loader.load_string(ledger)
-        plugin_errors = [e for e in errors if "missing_contribution_year" in e.message]
-        assert plugin_errors == []
+        errors = _plugin_errors(ledger)
+        assert errors == []
 
 
 class TestExactMatchOnly:
     """When destination_accounts is the only config, only listed accounts match."""
-
-    LEDGER_TEMPLATE = (
-        'option "operating_currency" "USD"\n'
-        'plugin "beancount_plugins.missing_contribution_year" "{{\n'
-        "    'destination_accounts': {accounts!r},\n"
-        "    'counterparty_accounts': ['Income:CapTech:Employer-Contribution']\n"
-        '}}"'
-    )
 
     @staticmethod
     def _ledger(accounts):
@@ -358,27 +337,21 @@ class TestExactMatchOnly:
 """
         )
 
-    def test_listed_account_flagged(self):
-        entries, _, _ = loader.load_string(self._ledger(["Assets:Retirement:HSA:Cash"]))
-        txn = _find_txn(entries, "Exact match contribution")
-        assert "missing-contribution-year" in txn.tags
-        assert txn.flag == "!"
+    def test_listed_account_errors(self):
+        errors = _plugin_errors(self._ledger(["Assets:Retirement:HSA:Cash"]))
+        assert _has_error_for(errors, "Exact match contribution")
 
-    def test_unlisted_hsa_old_not_flagged(self):
+    def test_unlisted_hsa_old_no_error(self):
         """HSA-old isn't in the exact list — should NOT match."""
-        entries, _, _ = loader.load_string(self._ledger(["Assets:Retirement:HSA:Cash"]))
-        txn = _find_txn(entries, "HSA-old (not in list)")
-        assert "missing-contribution-year" not in txn.tags
-        assert txn.flag == "*"
+        errors = _plugin_errors(self._ledger(["Assets:Retirement:HSA:Cash"]))
+        assert not _has_error_for(errors, "HSA-old (not in list)")
 
-    def test_unlisted_401k_not_flagged(self):
+    def test_unlisted_401k_no_error(self):
         """401k isn't in the exact list — should NOT match (no regex fallback)."""
-        entries, _, _ = loader.load_string(self._ledger(["Assets:Retirement:HSA:Cash"]))
-        txn = _find_txn(entries, "401k (not in list)")
-        assert "missing-contribution-year" not in txn.tags
-        assert txn.flag == "*"
+        errors = _plugin_errors(self._ledger(["Assets:Retirement:HSA:Cash"]))
+        assert not _has_error_for(errors, "401k (not in list)")
 
-    def test_multiple_listed_accounts_all_flagged(self):
+    def test_multiple_listed_accounts_all_error(self):
         ledger = (
             'option "operating_currency" "USD"\n'
             'plugin "beancount_plugins.missing_contribution_year" "{\n'
@@ -403,17 +376,15 @@ class TestExactMatchOnly:
     Income:CapTech:Employer-Contribution     -2000 USD
 """
         )
-        entries, _, _ = loader.load_string(ledger)
-        for narration in ("HSA exact", "401k exact"):
-            txn = _find_txn(entries, narration)
-            assert "missing-contribution-year" in txn.tags
-            assert txn.flag == "!"
+        errors = _plugin_errors(ledger)
+        assert _has_error_for(errors, "HSA exact")
+        assert _has_error_for(errors, "401k exact")
 
 
 class TestCombinedAccountsAndPatterns:
     """destination_accounts and destination_patterns together form a union."""
 
-    LEDGER_TEMPLATE = (
+    LEDGER = (
         'option "operating_currency" "USD"\n'
         'plugin "beancount_plugins.missing_contribution_year" "{\n'
         "    'destination_accounts': ['Assets:Retirement:HSA-old:Cash'],\n"
@@ -441,32 +412,31 @@ class TestCombinedAccountsAndPatterns:
 """
     )
 
-    def test_exact_match_works(self):
-        entries, _, _ = loader.load_string(self.LEDGER_TEMPLATE)
-        txn = _find_txn(entries, "HSA-old via exact")
-        assert "missing-contribution-year" in txn.tags
-        assert txn.flag == "!"
+    def test_exact_match_errors(self):
+        errors = _plugin_errors(self.LEDGER)
+        assert _has_error_for(errors, "HSA-old via exact")
 
-    def test_pattern_match_works(self):
-        entries, _, _ = loader.load_string(self.LEDGER_TEMPLATE)
-        txn = _find_txn(entries, "401k via pattern")
-        assert "missing-contribution-year" in txn.tags
-        assert txn.flag == "!"
+    def test_pattern_match_errors(self):
+        errors = _plugin_errors(self.LEDGER)
+        assert _has_error_for(errors, "401k via pattern")
 
-    def test_account_matching_neither_skipped(self):
+    def test_account_matching_neither_no_error(self):
         """IRA:Vanguard isn't in exact list and doesn't match the '401k' pattern."""
-        entries, _, _ = loader.load_string(self.LEDGER_TEMPLATE)
-        txn = _find_txn(entries, "IRA Vanguard (no match)")
-        assert "missing-contribution-year" not in txn.tags
-        assert txn.flag == "*"
+        errors = _plugin_errors(self.LEDGER)
+        assert not _has_error_for(errors, "IRA Vanguard (no match)")
 
 
 class TestAccountValidation:
     """Validation: explicitly-configured accounts must have Open directives."""
 
+    def _plugin_validation_errors(self, ledger):
+        """Return validation errors (not transaction violations)."""
+        _, errors, _ = loader.load_string(ledger)
+        return [e.message for e in errors if "unknown account" in e.message]
+
     def test_valid_accounts_no_error(self):
         """All configured accounts have Open directives → no validation errors."""
-        entries, errors, _ = loader.load_string(
+        errors = self._plugin_validation_errors(
             'option "operating_currency" "USD"\n'
             'plugin "beancount_plugins.missing_contribution_year" "{\n'
             "    'destination_accounts': ['Assets:Retirement:HSA:Cash'],\n"
@@ -478,12 +448,11 @@ class TestAccountValidation:
 2026-01-01 open Income:CapTech:Employer-Contribution USD
 """
         )
-        plugin_errors = [e for e in errors if "missing_contribution_year" in e.message]
-        assert plugin_errors == []
+        assert errors == []
 
     def test_unknown_destination_account_errors(self):
         """A destination_accounts entry with no Open directive → load fails."""
-        entries, errors, _ = loader.load_string(
+        errors = self._plugin_validation_errors(
             'option "operating_currency" "USD"\n'
             'plugin "beancount_plugins.missing_contribution_year" "{\n'
             "    'destination_accounts': ['Assets:Retirement:HSA:Cash', 'Assets:Typos:Here'],\n"
@@ -495,14 +464,11 @@ class TestAccountValidation:
 2026-01-01 open Income:CapTech:Employer-Contribution USD
 """
         )
-        assert any(
-            "Assets:Typos:Here" in e.message and "destination_accounts" in e.message
-            for e in errors
-        )
+        assert any("Assets:Typos:Here" in e for e in errors)
 
     def test_unknown_counterparty_account_errors(self):
         """A counterparty_accounts entry with no Open directive → load fails."""
-        entries, errors, _ = loader.load_string(
+        errors = self._plugin_validation_errors(
             'option "operating_currency" "USD"\n'
             'plugin "beancount_plugins.missing_contribution_year" "{\n'
             "    'destination_accounts': ['Assets:Retirement:HSA:Cash'],\n"
@@ -513,14 +479,11 @@ class TestAccountValidation:
 2026-01-01 open Assets:Retirement:HSA:Cash USD
 """
         )
-        assert any(
-            "Income:Nope:Wrong" in e.message and "counterparty_accounts" in e.message
-            for e in errors
-        )
+        assert any("Income:Nope:Wrong" in e for e in errors)
 
     def test_parent_open_accepts_child_account(self):
         """`open Assets:Bank` implicitly opens Assets:Bank:Checking."""
-        entries, errors, _ = loader.load_string(
+        errors = self._plugin_validation_errors(
             'option "operating_currency" "USD"\n'
             'plugin "beancount_plugins.missing_contribution_year" "{\n'
             "    'destination_accounts': ['Assets:Bank:Checking'],\n"
@@ -532,17 +495,11 @@ class TestAccountValidation:
 2026-01-01 open Income:X USD
 """
         )
-        plugin_errors = [e for e in errors if "missing_contribution_year" in e.message]
-        assert plugin_errors == []
+        assert errors == []
 
     def test_defaults_not_validated(self):
-        """No config provided → defaults are used and NOT validated.
-
-        The default counterparty list references accounts that don't exist
-        in this test ledger, but no validation error should fire because
-        defaults are trusted.
-        """
-        entries, errors, _ = loader.load_string(
+        """No config provided → defaults are used and NOT validated."""
+        errors = self._plugin_validation_errors(
             'option "operating_currency" "USD"\n'
             'plugin "beancount_plugins.missing_contribution_year"\n'
             + """
@@ -550,12 +507,11 @@ class TestAccountValidation:
 2026-01-01 open Assets:Retirement:HSA:Cash USD
 """
         )
-        plugin_errors = [e for e in errors if "missing_contribution_year" in e.message]
-        assert plugin_errors == []
+        assert errors == []
 
     def test_empty_destination_accounts_skips_validation(self):
         """Explicit empty destination_accounts = [] → nothing to validate."""
-        entries, errors, _ = loader.load_string(
+        errors = self._plugin_validation_errors(
             'option "operating_currency" "USD"\n'
             'plugin "beancount_plugins.missing_contribution_year" "{\n'
             "    'destination_accounts': [],\n"
@@ -567,13 +523,7 @@ class TestAccountValidation:
 2026-01-01 open Income:CapTech:Employer-Contribution USD
 """
         )
-        dest_errors = [
-            e
-            for e in errors
-            if "missing_contribution_year" in e.message
-            and "destination_accounts" in e.message
-        ]
-        assert dest_errors == []
+        assert errors == []
 
     def test_unparseable_config_skips_validation(self):
         """If config can't be parsed, defaults are used and not validated."""
@@ -591,11 +541,11 @@ class TestAccountValidation:
             entries_list, options, config="not-valid-config"
         )
         # No validation errors since config couldn't be parsed.
-        assert not any("references unknown account" in e.message for e in errors)
+        assert not any("unknown account" in e.message for e in errors)
 
     def test_multiple_invalid_accounts_all_reported(self):
         """Every invalid account is reported — not just the first."""
-        entries, errors, _ = loader.load_string(
+        errors = self._plugin_validation_errors(
             'option "operating_currency" "USD"\n'
             'plugin "beancount_plugins.missing_contribution_year" "{\n'
             "    'destination_accounts': [\n"
@@ -607,13 +557,13 @@ class TestAccountValidation:
             + """
 """
         )
-        assert any("Assets:Wrong1" in e.message for e in errors)
-        assert any("Assets:Wrong2" in e.message for e in errors)
-        assert any("Income:Wrong3" in e.message for e in errors)
+        assert any("Assets:Wrong1" in e for e in errors)
+        assert any("Assets:Wrong2" in e for e in errors)
+        assert any("Income:Wrong3" in e for e in errors)
 
     def test_typo_in_counterparty_caught(self):
         """Common real-world case: typo in counterparty account name."""
-        entries, errors, _ = loader.load_string(
+        errors = self._plugin_validation_errors(
             'option "operating_currency" "USD"\n'
             'plugin "beancount_plugins.missing_contribution_year" "{\n'
             "    'destination_accounts': ['Assets:Retirement:HSA:Cash'],\n"
@@ -626,7 +576,7 @@ class TestAccountValidation:
 """
         )
         # Note: typo 'Captech' vs 'CapTech' — different capitalization.
-        assert any("Income:Captech:Employer-Contribution" in e.message for e in errors)
+        assert any("Income:Captech:Employer-Contribution" in e for e in errors)
 
 
 class TestAccountValidationHelpers:
@@ -704,9 +654,8 @@ class TestEdgeCases:
     Expenses:Groceries          -200 USD
 """
         )
-        entries, _, _ = loader.load_string(ledger)
-        txn = _find_txn(entries, "Mixed sources")
-        assert "missing-contribution-year" not in txn.tags
+        errors = _plugin_errors(ledger)
+        assert not _has_error_for(errors, "Mixed sources")
 
     def test_three_posting_destination_with_counterparty(self):
         """3-posting txn: HSA dest + checking (no) + employer contribution (yes)."""
@@ -719,10 +668,8 @@ class TestEdgeCases:
     Income:CapTech:Employer-Contribution    -300 USD
 """
         )
-        entries, _, _ = loader.load_string(ledger)
-        txn = _find_txn(entries, "Mixed with employer")
-        assert "missing-contribution-year" in txn.tags
-        assert txn.flag == "!"
+        errors = _plugin_errors(ledger)
+        assert _has_error_for(errors, "Mixed with employer")
 
     def test_invalid_config_returns_errors(self):
         entries = []
@@ -730,20 +677,18 @@ class TestEdgeCases:
         _, errors = missing_contribution_year(entries, options, config="not-valid")
         assert any("Invalid config" in e.message for e in errors)
 
-    def test_invalid_config_still_processes_entries(self):
-        """A bad config falls back to defaults, so valid entries are still tagged."""
+    def test_invalid_config_still_validates_transactions(self):
+        """A bad config falls back to defaults, so transaction violations still emit errors."""
         ledger = (
             _BASE_LEDGER
             + """
-2026-01-15 * "Still flagged despite bad config"
+2026-01-15 * "Still errored despite bad config"
     Assets:Retirement:HSA:Cash       1000 USD
     Equity:ZeroSumMatched:Transfers -1000 USD
 """
         )
-        entries, _, _ = loader.load_string(ledger)
-        txn = _find_txn(entries, "Still flagged despite bad config")
-        assert "missing-contribution-year" in txn.tags
-        assert txn.flag == "!"
+        errors = _plugin_errors(ledger)
+        assert _has_error_for(errors, "Still errored despite bad config")
 
     def test_empty_destination_accounts_falls_through_to_patterns(self):
         """Explicitly empty destination_accounts means 'use default patterns'."""
@@ -763,10 +708,8 @@ class TestEdgeCases:
     Income:CapTech:Employer-Contribution     -1000 USD
 """
         )
-        entries, _, _ = loader.load_string(ledger)
-        txn = _find_txn(entries, "Still uses pattern defaults")
-        assert "missing-contribution-year" in txn.tags
-        assert txn.flag == "!"
+        errors = _plugin_errors(ledger)
+        assert _has_error_for(errors, "Still uses pattern defaults")
 
 
 class TestPerformance:
@@ -790,9 +733,8 @@ class TestPerformance:
     Income:CapTech:Employer-Contribution     -1000 USD
 """
         )
-        entries, _, _ = loader.load_string(ledger)
-        txn = _find_txn(entries, "Exact match only")
-        assert "missing-contribution-year" in txn.tags
+        errors = _plugin_errors(ledger)
+        assert _has_error_for(errors, "Exact match only")
 
     def test_exact_match_does_not_run_regex_on_similar_accounts(self):
         """HSA-old shouldn't match because it isn't in the exact list."""
@@ -817,10 +759,8 @@ class TestPerformance:
     Income:CapTech:Employer-Contribution     -500 USD
 """
         )
-        entries, _, _ = loader.load_string(ledger)
-        # HSA-old is in exact list — should be flagged.
-        txn = _find_txn(entries, "HSA-old exact match")
-        assert "missing-contribution-year" in txn.tags
-        # HSA is NOT in exact list and there are no patterns — should not match.
-        txn = _find_txn(entries, "HSA (not in exact list, no patterns)")
-        assert "missing-contribution-year" not in txn.tags
+        errors = _plugin_errors(ledger)
+        # HSA-old is in exact list — should error.
+        assert _has_error_for(errors, "HSA-old exact match")
+        # HSA is NOT in exact list and there are no patterns — should not error.
+        assert not _has_error_for(errors, "HSA (not in exact list, no patterns)")

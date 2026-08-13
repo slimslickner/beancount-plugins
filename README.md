@@ -10,8 +10,8 @@ Personal helper plugins for the Beancount finance ledger. These plugins are desi
 4. **check_valid_tags** - Validates transaction tags against an allowed whitelist (requires `tags.yaml`)
 5. **check_valid_metadata** - Validates metadata keys and values against a typed schema (requires `metadata_schema.yaml`)
 6. **posting_tags** - Enables per-posting tags via `tags` metadata, promoting them to the transaction level for Fava/bean-query visibility
-7. **transfer_remove_payee** - Tags and flags (`!`) transactions that look like transfers (Assets/Liabilities/Equity only) but incorrectly carry a payee
-8. **missing_contribution_year** - Tags and flags (`!`) retirement contributions missing a `contribution-year` metadata key on the **receiving posting** (the destination, not the transaction itself); primary mode is exact-match on `destination_accounts` (validated against Open directives at load time), with regex `destination_patterns` as a fallback. Counterparty accounts are configurable via inline dict.
+7. **transfer_remove_payee** - Errors on transactions that look like transfers (Assets/Liabilities/Equity only) but incorrectly carry a payee
+8. **missing_contribution_year** - Errors on retirement contributions missing a `contribution-year` metadata key on the **receiving posting** (the destination, not the transaction itself); primary mode is exact-match on `destination_accounts` (validated against Open directives at load time), with regex `destination_patterns` as a fallback. Counterparty accounts are configurable via inline dict.
 
 ## Usage
 

@@ -260,14 +260,14 @@ plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"
     Equity:ZeroSumMatched:Transfers -1000.00 USD
 
 ; NO FLAG: same structure, but contribution-year is set on the destination posting
-2026-12-21 * "HSA contribution with year"
+2026-12-21 * "HSA contribution with year on posting"
     Assets:Retirement:HSA:Cash       1000.00 USD
         contribution-year: "2026"
     Equity:ZeroSumMatched:Transfers -1000.00 USD
 
 ; FLAG: contribution-year is on the transaction (wrong place) — still flagged
 ; because the receiving posting lacks it. Demonstrates the meta-on-posting rule.
-2026-12-25 * "HSA contribution with year on wrong place"
+2026-12-25 * "HSA contribution with year on txn"
     contribution-year: "2026"
     Assets:Retirement:HSA:Cash       1000.00 USD
     Equity:ZeroSumMatched:Transfers -1000.00 USD

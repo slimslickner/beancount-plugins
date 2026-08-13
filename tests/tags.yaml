@@ -12,7 +12,3 @@ tags:
     label: "Business-related expenses"
   personal:
     label: "Personal expenses"
-  transfer-remove-payee:
-    label: "Transaction looks like a transfer but has a payee — review and remove payee"
-  missing-contribution-year:
-    label: "Retirement contribution missing contribution-year metadata — add the year"

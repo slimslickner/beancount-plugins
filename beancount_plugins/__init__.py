@@ -49,19 +49,19 @@ INCLUDED PLUGINS:
    Usage: plugin "beancount_plugins.posting_tags"
 
 7. transfer_remove_payee
-   - Flags transactions that look like transfers (between Assets/Liabilities/Equity
+   - Errors on transactions that look like transfers (between Assets/Liabilities/Equity
      accounts) but have a payee set — almost always a mistake
-   - Tags matched transactions with #transfer-remove-payee and sets the flag to '!'
+   - Emits a ParserError per violation; the ledger fails to load until fixed
    - Excludes Assets:Receivable:* (AR legitimately uses payees for invoices)
    - Skips transfers where all postings share the same immediate parent
      (e.g. Assets:Checking <-> Assets:Savings — narration is enough)
    Usage: plugin "beancount_plugins.transfer_remove_payee"
 
 8. missing_contribution_year
-   - Flags retirement contributions that lack a `contribution-year` key on
+   - Errors on retirement contributions that lack a `contribution-year` key on
      the RECEIVING posting (the destination) — needed for grouping
      contributions by tax year
-   - Tags matched transactions with #missing-contribution-year and sets flag to '!'
+   - Emits a ParserError per violation; the ledger fails to load until fixed
    - The contribution-year metadata must be on the destination posting, NOT
      on the transaction — this allows per-destination year tracking in
      multi-account transactions.
