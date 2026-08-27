@@ -39,7 +39,7 @@ ERROR REPORTING:
 Errors are reported as ParserErrors with proper file/line information,
 so they appear in bean-check output and IDE error panels with navigation:
 
-    your-file.bean:42: Posting to link-required account 'Assets:AR:Client-A'
+    your-file.bean:42: Posting to link-required account 'Assets:AccountsReceivable'
     missing link: "Invoice payment"
 
 EXAMPLES OF LINK USAGE:
@@ -53,8 +53,17 @@ With link-required accounts, you'd write transactions like:
         Expenses:Reimbursable  75 USD
         Liabilities:CreditCard  -75 USD
 
-Links provide a traceable reference to external documents (invoices, receipts,
-tickets) and enable cross-referencing transactions in Fava and bean-query.
+WHY LINKS MATTER:
+- Link a transaction to an external reference (invoice number, receipt ID,
+  support ticket) so you can find the source document from the ledger
+- Cross-reference transactions across accounts (e.g. a reimbursement paid
+  from checking links back to the original credit-card charge)
+- Enable traceability for accounts where the audit trail matters
+  (accounts receivable, reimbursable expenses, tax-deductible purchases)
+- Browseable in Fava and queryable via bean-query, just like tags
+
+Links complement tags: tags answer "what kind of expense is this?", links
+answer "where is the source document?".
 """
 
 __copyright__ = "Copyright (C) 2026 slimslickner"
@@ -81,7 +90,7 @@ def check_missing_links(
     Args:
         entries: List of beancount entries
         options_map: Beancount options map
-        config: Optional config string (unused, reserved for future enhancements)
+        config: Optional config string (currently unused)
 
     Returns:
         Tuple of (entries_unchanged, errors)
