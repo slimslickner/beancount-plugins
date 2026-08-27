@@ -78,19 +78,47 @@ INCLUDED PLUGINS:
    Usage: plugin "beancount_plugins.missing_contribution_year"
    Usage: plugin "beancount_plugins.missing_contribution_year" "{
        'destination_accounts': ['Assets:Retirement:401k:Cash'],
-       'counterparty_accounts': ['Income:CapTech:Employer-Contribution']
+       'counterparty_accounts': ['Income:ACME:Employer-Contribution']
    }"
+
+9. promote_account_metadata
+   - Copies metadata from each account's Open directive onto postings for
+     that account, so account-level annotations (e.g. tax-treatment,
+     cost-center, department) flow down to individual postings for queries
+     and downstream plugins
+   - Existing posting values win on conflict; a WARNING is logged for each
+     conflict (visible with `bean-check -v`)
+   - System keys (filename, lineno) are never promoted
+   - Optional inline dict config: `whitelist` (only promote these keys),
+     `blacklist` (promote all except these). Whitelist wins if both provided.
+   Usage: plugin "beancount_plugins.promote_account_metadata"
+   Usage: plugin "beancount_plugins.promote_account_metadata" "{
+       'whitelist': ['tax-treatment']
+   }"
+
+10. implicit_prices_flagged
+   - Drop-in replacement for `beancount.plugins.implicit_prices` that honors
+     a per-posting `no-implicit-price: TRUE` opt-out for cost-derived prices
+     (e.g. in-kind transfers whose cost basis is not today's market price
+     and shouldn't be recorded as one)
+   - Injects synthesized `Price` entries tagged with `__implicit_prices__:
+     from_price` or `from_cost`
+   - USE INSTEAD OF, not alongside, `beancount.plugins.implicit_prices` —
+     running both will just re-add the prices this one skips
+   Usage: plugin "beancount_plugins.implicit_prices_flagged"
 
 INTEGRATION:
 Add plugins to your main ledger file as needed (order matters):
 
     plugin "beancount_plugins.posting_tags"
+    plugin "beancount_plugins.implicit_prices_flagged"
     plugin "beancount_plugins.transfer_remove_payee"
     plugin "beancount_plugins.missing_contribution_year"
     plugin "beancount_plugins.zerosum_transaction_matcher"
     plugin "beancount_plugins.check_missing_tags"
     plugin "beancount_plugins.check_missing_links"
     plugin "beancount_plugins.check_valid_tags"
+    plugin "beancount_plugins.promote_account_metadata"
     plugin "beancount_plugins.check_valid_metadata"
 
 Each plugin can be used independently based on your needs.
@@ -104,6 +132,12 @@ See individual plugin modules for detailed configuration options and examples:
   destination_patterns, and/or counterparty_accounts. Explicit destination_accounts
   replaces default patterns (no silent regex fallback). Explicitly-configured
   accounts are validated against Open directives.
+- promote_account_metadata: inline dict with `whitelist` (string or list of
+  keys to promote) or `blacklist` (string or list of keys to exclude).
+  Whitelist wins if both provided. System keys (filename, lineno) are
+  never promoted.
+- implicit_prices_flagged: no config; opt out per-posting with
+  `no-implicit-price: TRUE` metadata on the posting you want to skip
 - check_valid_tags requires: tags.yaml
 - check_valid_metadata requires: metadata_schema.yaml
 """
