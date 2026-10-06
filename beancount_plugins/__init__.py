@@ -107,12 +107,23 @@ INCLUDED PLUGINS:
      running both will just re-add the prices this one skips
    Usage: plugin "beancount_plugins.implicit_prices_flagged"
 
+11. block_transactions
+   - Blocks transactions on accounts marked `block-transactions: TRUE` in
+     their Open directive — useful for parent accounts opened only to attach
+     Fava documents (e.g. `Assets:Investment:Brokerage`)
+   - Matching is exact, so sub-accounts (e.g.
+     `Assets:Investment:Brokerage:USD`) remain usable
+   - Default is off; only accounts that opt in are enforced
+   - Reports violations as parser errors for bean-check integration
+   Usage: plugin "beancount_plugins.block_transactions"
+
 INTEGRATION:
 Add plugins to your main ledger file as needed (order matters):
 
     plugin "beancount_plugins.posting_tags"
     plugin "beancount_plugins.implicit_prices_flagged"
     plugin "beancount_plugins.transfer_remove_payee"
+    plugin "beancount_plugins.block_transactions"
     plugin "beancount_plugins.missing_contribution_year"
     plugin "beancount_plugins.zerosum_transaction_matcher"
     plugin "beancount_plugins.check_missing_tags"
@@ -128,6 +139,8 @@ See individual plugin modules for detailed configuration options and examples:
 - posting_tags: no config required
 - transfer_remove_payee: no config required; if combined with check_valid_tags,
   add 'transfer-remove-payee' to tags.yaml
+- block_transactions: no config; opt in per account with
+  `block-transactions: TRUE` on its Open directive
 - missing_contribution_year: inline dict overrides destination_accounts,
   destination_patterns, and/or counterparty_accounts. Explicit destination_accounts
   replaces default patterns (no silent regex fallback). Explicitly-configured
