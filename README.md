@@ -12,6 +12,7 @@ Personal helper plugins for the Beancount finance ledger. These plugins are desi
 6. **posting_tags** - Enables per-posting tags via `tags` metadata, promoting them to the transaction level for Fava/bean-query visibility
 7. **transfer_remove_payee** - Errors on transactions that look like transfers (Assets/Liabilities/Equity only) but incorrectly carry a payee
 8. **missing_contribution_year** - Errors on retirement contributions missing a `contribution-year` metadata key on the **receiving posting** (the destination, not the transaction itself); primary mode is exact-match on `destination_accounts` (validated against Open directives at load time), with regex `destination_patterns` as a fallback. Counterparty accounts are configurable via inline dict.
+9. **block_transactions** - Errors on any posting to an account whose Open directive sets `block-transactions: TRUE`. Matching is exact, so sub-accounts remain usable. Useful for parent accounts opened only to attach Fava documents (e.g. `Assets:Investment:Brokerage`).
 
 ## Usage
 
@@ -20,6 +21,7 @@ These plugins are installed as a local package dependency and can be used in Bea
 ```beancount
 plugin "beancount_plugins.posting_tags"
 plugin "beancount_plugins.transfer_remove_payee"
+plugin "beancount_plugins.block_transactions"
 plugin "beancount_plugins.missing_contribution_year"
 plugin "beancount_plugins.zerosum_transaction_matcher"
 plugin "beancount_plugins.check_missing_tags"
