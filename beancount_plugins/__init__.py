@@ -108,14 +108,40 @@ INCLUDED PLUGINS:
    Usage: plugin "beancount_plugins.implicit_prices_flagged"
 
 11. block_transactions
-   - Blocks transactions on accounts marked `block-transactions: TRUE` in
-     their Open directive — useful for parent accounts opened only to attach
-     Fava documents (e.g. `Assets:Investment:Brokerage`)
-   - Matching is exact, so sub-accounts (e.g.
-     `Assets:Investment:Brokerage:USD`) remain usable
-   - Default is off; only accounts that opt in are enforced
-   - Reports violations as parser errors for bean-check integration
-   Usage: plugin "beancount_plugins.block_transactions"
+    - Blocks transactions on accounts marked `block-transactions: TRUE` in
+      their Open directive — useful for parent accounts opened only to attach
+      Fava documents (e.g. `Assets:Investment:Brokerage`)
+    - Matching is exact, so sub-accounts (e.g.
+      `Assets:Investment:Brokerage:USD`) remain usable
+    - Default is off; only accounts that opt in are enforced
+    - Reports violations as parser errors for bean-check integration
+    Usage: plugin "beancount_plugins.block_transactions"
+
+12. aggregate_account_metadata
+    - Derives one or more aggregated metadata keys on Open directives from a
+      source metadata key (e.g. `account-type` -> `asset-class`), based on a
+      user-supplied value -> value mapping
+    - Open-directive-only: reads the source key from the Open and writes the
+      derived key back onto the same Open. Load BEFORE promote_account_metadata
+      to flow derived keys down to postings.
+    - One config supports multiple aggregations (multiple derived keys) at once
+    - Per-aggregation `mode`: 'strict' (every observed source value must be
+      mapped, else a ParserError at that Open) or 'default' (unmapped values
+      fall back to the required `default`), plus a shared coverage check that
+      errors on declared-but-never-used source values
+    - Existing derived keys win on conflict; a WARNING is logged (visible with
+      `bean-check -v`)
+    Usage: plugin "beancount_plugins.aggregate_account_metadata" "{
+        'aggregations': {
+            'asset-class': {
+                'source': 'account-type',
+                'maps': {
+                    'taxable': ['checking', 'savings', 'brokerage'],
+                    'retirement': ['ira', '401k', '403b']
+                }
+            }
+        }
+    }"
 
 INTEGRATION:
 Add plugins to your main ledger file as needed (order matters):
@@ -129,6 +155,7 @@ Add plugins to your main ledger file as needed (order matters):
     plugin "beancount_plugins.check_missing_tags"
     plugin "beancount_plugins.check_missing_links"
     plugin "beancount_plugins.check_valid_tags"
+    plugin "beancount_plugins.aggregate_account_metadata"
     plugin "beancount_plugins.promote_account_metadata"
     plugin "beancount_plugins.check_valid_metadata"
 
@@ -149,6 +176,12 @@ See individual plugin modules for detailed configuration options and examples:
   keys to promote) or `blacklist` (string or list of keys to exclude).
   Whitelist wins if both provided. System keys (filename, lineno) are
   never promoted.
+- aggregate_account_metadata: inline dict with an `aggregations` map. Each
+  aggregation names a derived key, its `source` metadata key, an optional
+  `mode` ('strict' default, or 'default' with a required `default` fallback),
+  and a `maps` dict of aggregated value -> list of source values. Strict mode
+  errors on unmapped values; both modes error on declared-but-never-used
+  source values. Load before promote_account_metadata.
 - implicit_prices_flagged: no config; opt out per-posting with
   `no-implicit-price: TRUE` metadata on the posting you want to skip
 - check_valid_tags requires: tags.yaml
