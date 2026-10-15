@@ -14,6 +14,8 @@ WHAT IT DOES:
 - Enforces allowed_values constraints
 - Enforces pattern constraints (regex for strings)
 - Enforces account_pattern constraints (fields are only allowed on matching accounts)
+- Errors on declared-but-unused keys: any key in the schema that never appears
+  on a matching directive (or posting) is reported as stale/dead config
 - Reports violations as parser errors with field context
 
 USAGE:
@@ -127,6 +129,22 @@ SCHEMA SPECIFICATION:
    - allowed_prefix: Any key starting with this is skipped (e.g., "_" for internal Beancount keys)
    - allowed_keys: Specific keys that bypass schema validation (e.g., smart_importer keys)
 
+5. UNUSED KEY CHECK:
+   Every key declared in a section must be used at least once, otherwise a
+   ParserError is emitted at schema-load time. "Used" means the key appears on a
+   directive (or posting) of the section it is declared in:
+   - transaction keys must appear on at least one Transaction directive
+   - posting keys must appear on at least one posting
+   - open/close/document/event/commodity/note keys must appear on at least one
+     matching directive
+   For a key with account_pattern, only occurrences on a matching account count;
+   an occurrence on a non-matching account is already an error and does not
+   satisfy the usage requirement. Keys matched by plugin_exceptions bypass
+   validation; a key that is both declared and excepted still counts as used.
+
+   NOTE: this check is unconditional. A schema loaded against a ledger with no
+   matching directives will report every declared key as unused.
+
 TYPE VALIDATION:
 - string: isinstance(v, str)
 - int: isinstance(v, int)
@@ -141,6 +159,11 @@ Errors are reported with field context:
     your-file.bean:42: Invalid value 'invalid' for posting metadata 'tag' (allowed: personal, business)
     your-file.bean:15: Invalid metadata key 'unknown_key' on Open directive for 'Assets:Checking'
     your-file.bean:42: Metadata 'receipt_id' on posting directive (posting to 'Expenses:Travel') is only allowed on accounts matching 'Expenses:Reimbursable'
+
+Declared-but-unused keys are reported against the ledger file at line 0
+(file-level, since there is no offending directive to point at):
+
+    your-file.bean:0: check_valid_metadata: Declared metadata key 'obsolete_field' in 'transaction' schema is never used
 
 COMPLEMENTARY PLUGINS:
 - check_valid_tags: Validates transaction tags against allowed list
@@ -208,6 +231,7 @@ def check_valid_metadata(
     errors: list[ParserError] = []
 
     # Determine config file path, resolved relative to the ledger file's directory.
+    ledger_filename = options_map.get("filename", "unknown")
     ledger_dir = Path(options_map.get("filename", "")).parent
     if config:
         config_path = Path(config)
@@ -300,6 +324,11 @@ def check_valid_metadata(
         for dtype, schema in directive_schemas.items()
     }
 
+    # Track which declared keys are actually used, per section. A key counts as
+    # used only when it appears on a directive/posting of its declared section
+    # and (for account_pattern keys) on a matching account.
+    used_keys: dict[str, set[str]] = {dtype: set() for dtype in _dtypes}
+
     # Build exception rules
     allowed_prefixes: list[str] = []
     allowed_exception_keys: set[str] = set()
@@ -360,6 +389,7 @@ def check_valid_metadata(
             accounts=accounts,
             allowed_prefixes=allowed_prefixes,
             allowed_exception_keys=allowed_exception_keys,
+            used=used_keys[directive_type],
         )
         violations_count += len(key_errors)
         errors.extend(key_errors)
@@ -395,6 +425,7 @@ def check_valid_metadata(
                     accounts=[posting.account],
                     allowed_prefixes=allowed_prefixes,
                     allowed_exception_keys=allowed_exception_keys,
+                    used=used_keys["posting"],
                 )
                 violations_count += len(key_errors)
                 errors.extend(key_errors)
@@ -417,6 +448,26 @@ def check_valid_metadata(
                         )
                     )
 
+    # Report declared-but-unused keys: any schema key that never appeared on a
+    # matching directive (or posting) of its declared section is dead config.
+    # Anchored to the ledger file at line 0 (file-level) since an unused key has
+    # no offending directive to point at.
+    unused_source = {"filename": ledger_filename, "lineno": 0}
+    for dtype in _dtypes:
+        unused = sorted(set(directive_schemas[dtype]) - used_keys[dtype])
+        for key in unused:
+            violations_count += 1
+            errors.append(
+                ParserError(
+                    source=dict(unused_source),
+                    message=(
+                        f"check_valid_metadata: Declared metadata key '{key}' in "
+                        f"'{dtype}' schema is never used"
+                    ),
+                    entry=None,
+                )
+            )
+
     # Log summary
     if violations_count > 0:
         logger.warning("Found %d metadata validation errors", violations_count)
@@ -436,6 +487,7 @@ def _validate_metadata_keys(
     accounts: list[str],
     allowed_prefixes: list[str],
     allowed_exception_keys: set[str],
+    used: set[str],
 ) -> list[ParserError]:
     """Validate metadata keys and values against schema.
 
@@ -453,6 +505,9 @@ def _validate_metadata_keys(
         accounts: Account names the metadata applies to (for account_pattern)
         allowed_prefixes: Prefixes that bypass validation
         allowed_exception_keys: Specific keys that bypass validation
+        used: Set of declared keys observed as used; mutated in place. A key is
+            added only when it is declared, passes the account_pattern check,
+            and so genuinely satisfies its section's usage requirement.
 
     Returns:
         List of ParserError for any violations found
@@ -468,6 +523,11 @@ def _validate_metadata_keys(
         if any(key.startswith(p) for p in allowed_prefixes):
             continue
         if key in allowed_exception_keys:
+            # Exception keys bypass schema validation, but if one is also
+            # declared in the schema it is still used and must not be reported
+            # as stale config.
+            if key in allowed:
+                used.add(key)
             continue
 
         if key not in allowed:
@@ -494,6 +554,9 @@ def _validate_metadata_keys(
                 )
             )
             continue
+
+        # Declared key present on a matching directive: it is used.
+        used.add(key)
 
         value_error = _validate_metadata_value(key, value, spec, level, source, context)
         if value_error:

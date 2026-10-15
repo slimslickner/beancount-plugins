@@ -691,7 +691,166 @@ class TestAccountPatternConfigErrors:
 
     @pytest.mark.parametrize("dtype", ["posting", "open", "close", "document", "note"])
     def test_pattern_allowed_section(self, tmp_path, dtype):
-        assert not self._messages(tmp_path, dtype)
+        # A declared-but-unused key also errors (entries is empty here), so
+        # assert specifically that account_pattern is accepted as a config key.
+        assert not any(
+            "account_pattern is not valid" in m for m in self._messages(tmp_path, dtype)
+        )
+
+
+class TestUnusedMetadataKeys:
+    """Declared-but-unused schema keys are reported as errors."""
+
+    def _load(self, tmp_path, schema_body, ledger_body=""):
+        schema = tmp_path / "metadata_schema.yaml"
+        schema.write_text(schema_body)
+        ledger = tmp_path / "test.beancount"
+        ledger.write_text(
+            'option "title" "Unused key test"\n'
+            'option "operating_currency" "USD"\n'
+            'plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"\n'
+            "\n" + ledger_body
+        )
+        _, errors, _ = loader.load_file(str(ledger))
+        return [e.message for e in errors]
+
+    def test_unused_transaction_key_errors(self, tmp_path):
+        """A transaction key that never appears is flagged as unused."""
+        messages = self._load(
+            tmp_path,
+            "metadata:\n"
+            "  transaction:\n"
+            "    never_used:\n"
+            "      type: string\n"
+            "      required: false\n",
+        )
+        assert any(
+            "check_valid_metadata: Declared metadata key 'never_used' in "
+            "'transaction' schema is never used" in m
+            for m in messages
+        )
+
+    def test_used_transaction_key_passes(self, tmp_path):
+        """A transaction key that appears on a directive is not flagged."""
+        messages = self._load(
+            tmp_path,
+            "metadata:\n"
+            "  transaction:\n"
+            "    used_key:\n"
+            "      type: string\n"
+            "      required: false\n",
+            '2024-01-01 * "x"\n'
+            '    used_key: "v"\n'
+            "    Expenses:Travel  1.00 USD\n"
+            "    Assets:Checking  -1.00 USD\n",
+        )
+        assert not any("never used" in m for m in messages)
+
+    def test_unused_open_key_errors(self, tmp_path):
+        """An Open key that never appears is flagged as unused."""
+        messages = self._load(
+            tmp_path,
+            "metadata:\n"
+            "  open:\n"
+            "    never_used:\n"
+            "      type: string\n"
+            "      required: false\n",
+            "2024-01-01 open Assets:Checking\n",
+        )
+        assert any(
+            "Declared metadata key 'never_used' in 'open' schema is never used" in m
+            for m in messages
+        )
+
+    def test_posting_key_used_on_posting_passes(self, tmp_path):
+        """A posting key that appears on a posting is not flagged."""
+        messages = self._load(
+            tmp_path,
+            "metadata:\n"
+            "  posting:\n"
+            "    cost_center:\n"
+            "      type: string\n"
+            "      required: false\n",
+            '2024-01-01 * "x"\n'
+            "    Expenses:Travel  1.00 USD\n"
+            '        cost_center: "ops"\n'
+            "    Assets:Checking  -1.00 USD\n",
+        )
+        assert not any("never used" in m for m in messages)
+
+    def test_pattern_key_matching_usage_counts(self, tmp_path):
+        """A patterned key used on a matching account is not flagged."""
+        messages = self._load(
+            tmp_path,
+            "metadata:\n"
+            "  open:\n"
+            "    code:\n"
+            "      type: string\n"
+            "      required: false\n"
+            '      account_pattern: "Assets:Investment"\n',
+            '2024-01-01 open Assets:Investment:Brokerage\n  code: "BRK"\n',
+        )
+        assert not any("never used" in m for m in messages)
+
+    def test_pattern_key_non_matching_only_is_unused(self, tmp_path):
+        """A patterned key seen only on a non-matching account is still unused."""
+        messages = self._load(
+            tmp_path,
+            "metadata:\n"
+            "  open:\n"
+            "    code:\n"
+            "      type: string\n"
+            "      required: false\n"
+            '      account_pattern: "Assets:Investment"\n',
+            '2024-01-01 open Expenses:Groceries\n  code: "BRK"\n',
+        )
+        assert any(
+            "Declared metadata key 'code' in 'open' schema is never used" in m
+            for m in messages
+        )
+        # The non-matching occurrence is independently rejected.
+        assert any("only allowed on accounts matching" in m for m in messages)
+
+    def test_declared_key_also_in_exceptions_is_used(self, tmp_path):
+        """A declared key listed in plugin_exceptions still counts as used."""
+        messages = self._load(
+            tmp_path,
+            "metadata:\n"
+            "  transaction:\n"
+            "    used_key:\n"
+            "      type: string\n"
+            "      required: false\n"
+            "  plugin_exceptions:\n"
+            "    - allowed_keys: [used_key]\n",
+            '2024-01-01 * "x"\n'
+            '    used_key: "v"\n'
+            "    Expenses:Travel  1.00 USD\n"
+            "    Assets:Checking  -1.00 USD\n",
+        )
+        assert not any("never used" in m for m in messages)
+
+    def test_unused_key_anchored_to_ledger_file(self, tmp_path):
+        """The error points at the ledger file (line 0), not the schema file."""
+        schema = tmp_path / "metadata_schema.yaml"
+        schema.write_text(
+            "metadata:\n"
+            "  transaction:\n"
+            "    never_used:\n"
+            "      type: string\n"
+            "      required: false\n"
+        )
+        ledger = tmp_path / "test.beancount"
+        ledger.write_text(
+            'option "title" "Anchor test"\n'
+            'option "operating_currency" "USD"\n'
+            'plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"\n'
+            "\n"
+        )
+        _, errors, _ = loader.load_file(str(ledger))
+        unused = [e for e in errors if "never used" in e.message]
+        assert unused
+        assert unused[0].source["filename"] == str(ledger)
+        assert unused[0].source["lineno"] == 0
 
 
 class TestEntryAccounts:
