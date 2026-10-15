@@ -829,6 +829,29 @@ class TestUnusedMetadataKeys:
         )
         assert not any("never used" in m for m in messages)
 
+    def test_unused_key_anchored_to_ledger_file(self, tmp_path):
+        """The error points at the ledger file (line 0), not the schema file."""
+        schema = tmp_path / "metadata_schema.yaml"
+        schema.write_text(
+            "metadata:\n"
+            "  transaction:\n"
+            "    never_used:\n"
+            "      type: string\n"
+            "      required: false\n"
+        )
+        ledger = tmp_path / "test.beancount"
+        ledger.write_text(
+            'option "title" "Anchor test"\n'
+            'option "operating_currency" "USD"\n'
+            'plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"\n'
+            "\n"
+        )
+        _, errors, _ = loader.load_file(str(ledger))
+        unused = [e for e in errors if "never used" in e.message]
+        assert unused
+        assert unused[0].source["filename"] == str(ledger)
+        assert unused[0].source["lineno"] == 0
+
 
 class TestEntryAccounts:
     """Unit tests for _entry_accounts."""

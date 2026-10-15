@@ -160,9 +160,10 @@ Errors are reported with field context:
     your-file.bean:15: Invalid metadata key 'unknown_key' on Open directive for 'Assets:Checking'
     your-file.bean:42: Metadata 'receipt_id' on posting directive (posting to 'Expenses:Travel') is only allowed on accounts matching 'Expenses:Reimbursable'
 
-Declared-but-unused keys are reported against the schema file:
+Declared-but-unused keys are reported against the ledger file at line 0
+(file-level, since there is no offending directive to point at):
 
-    metadata_schema.yaml:0: Declared metadata key 'obsolete_field' in 'transaction' schema is never used
+    your-file.bean:0: Declared metadata key 'obsolete_field' in 'transaction' schema is never used
 
 COMPLEMENTARY PLUGINS:
 - check_valid_tags: Validates transaction tags against allowed list
@@ -230,6 +231,7 @@ def check_valid_metadata(
     errors: list[ParserError] = []
 
     # Determine config file path, resolved relative to the ledger file's directory.
+    ledger_filename = options_map.get("filename", "unknown")
     ledger_dir = Path(options_map.get("filename", "")).parent
     if config:
         config_path = Path(config)
@@ -448,13 +450,16 @@ def check_valid_metadata(
 
     # Report declared-but-unused keys: any schema key that never appeared on a
     # matching directive (or posting) of its declared section is dead config.
+    # Anchored to the ledger file at line 0 (file-level) since an unused key has
+    # no offending directive to point at.
+    unused_source = {"filename": ledger_filename, "lineno": 0}
     for dtype in _dtypes:
         unused = sorted(set(directive_schemas[dtype]) - used_keys[dtype])
         for key in unused:
             violations_count += 1
             errors.append(
                 ParserError(
-                    source={"filename": str(config_path), "lineno": 0},
+                    source=dict(unused_source),
                     message=(
                         f"Declared metadata key '{key}' in '{dtype}' schema is "
                         f"never used"
