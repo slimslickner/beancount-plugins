@@ -163,7 +163,7 @@ Errors are reported with field context:
 Declared-but-unused keys are reported against the ledger file at line 0
 (file-level, since there is no offending directive to point at):
 
-    your-file.bean:0: Declared metadata key 'obsolete_field' in 'transaction' schema is never used
+    your-file.bean:0: check_valid_metadata: Declared metadata key 'obsolete_field' in 'transaction' schema is never used
 
 COMPLEMENTARY PLUGINS:
 - check_valid_tags: Validates transaction tags against allowed list
@@ -461,8 +461,8 @@ def check_valid_metadata(
                 ParserError(
                     source=dict(unused_source),
                     message=(
-                        f"Declared metadata key '{key}' in '{dtype}' schema is "
-                        f"never used"
+                        f"check_valid_metadata: Declared metadata key '{key}' in "
+                        f"'{dtype}' schema is never used"
                     ),
                     entry=None,
                 )

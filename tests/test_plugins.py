@@ -725,8 +725,8 @@ class TestUnusedMetadataKeys:
             "      required: false\n",
         )
         assert any(
-            "Declared metadata key 'never_used' in 'transaction' schema is never used"
-            in m
+            "check_valid_metadata: Declared metadata key 'never_used' in "
+            "'transaction' schema is never used" in m
             for m in messages
         )
 
