@@ -10,7 +10,7 @@ This is a Python package providing custom plugins for **Beancount**, a text-base
 2. **check_missing_tags** - Validates that transactions have required tags based on account configuration
 3. **check_missing_links** - Validates that transactions posting to link-required accounts include at least one link (via `link-expected: True` on Open directives)
 4. **check_valid_tags** - Validates transaction tags against an allowed whitelist
-5. **check_valid_metadata** - Validates metadata keys and values against a typed schema
+5. **check_valid_metadata** - Validates metadata keys and values against a typed schema, and errors on declared-but-unused schema keys
 6. **posting_tags** - Enables per-posting tag granularity via 'tags' metadata on postings
 7. **transfer_remove_payee** - Errors on transfer-shaped transactions (Assets/Liabilities/Equity only) that incorrectly carry a payee — excludes `Assets:Receivable:` and same-parent transfers
 8. **missing_contribution_year** - Errors on retirement contributions whose receiving posting lacks a `contribution-year` metadata key; requires a "destination + counterparty" pair to qualify so random asset movements don't trip it
@@ -154,6 +154,7 @@ pytest tests/
 - Supports type constraints (string, int, bool, date, Decimal)
 - Supports required fields and allowed_values constraints
 - Supports `account_pattern` to scope fields to matching accounts (regex, matched from the start of the account name). On `posting`/`open`/`close`/`document`/`note`, a patterned field is only allowed where the account matches and is required there when `required: true`; declaring it on `transaction`/`event`/`commodity` is a load-time config error
+- Errors on declared-but-unused keys: every key declared in a section must appear on at least one matching directive/posting of that section. For `account_pattern` keys, only occurrences on a matching account count. This is unconditional, so a schema loaded against a ledger with no matching directives reports every declared key
 - Reports ParserErrors for schema violations
 
 ### For posting_tags

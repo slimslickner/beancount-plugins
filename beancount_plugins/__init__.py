@@ -38,6 +38,7 @@ INCLUDED PLUGINS:
    - Enforces type constraints (string, int, bool, date, Decimal)
    - Supports required fields and allowed_values constraints
    - Validates at transaction and posting levels
+   - Reports declared-but-unused schema keys as errors (dead config)
    - Reports violations with field context
    Usage: plugin "beancount_plugins.check_valid_metadata"
 
