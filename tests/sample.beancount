@@ -130,10 +130,10 @@ plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"
     Assets:Checking  -50.00 USD
     Assets:Savings  50.00 USD
 
-; NO ERROR: posts to Expenses:Reimbursable with receipt_id provided
+; NO ERROR: posts to Expenses:Reimbursable with receipt_id provided on the posting
 2026-06-03 * "Reimbursable with receipt" #reimbursable ^receipt-003
-    receipt_id: "R-001"
     Expenses:Reimbursable  200.00 USD
+        receipt_id: "R-001"
     Assets:Checking  -200.00 USD
 
 ; NO ERROR: posts to Expenses:Travel — pattern is exact, doesn't match
@@ -141,10 +141,20 @@ plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"
     Expenses:Travel  80.00 USD
     Assets:Checking  -80.00 USD
 
+; ERROR: receipt_id on a posting whose account doesn't match the pattern
+2026-06-05 * "Receipt on wrong account"
+    Expenses:Travel  90.00 USD
+        receipt_id: "R-002"
+    Assets:Checking  -90.00 USD
+
 ; === Section 7: account_pattern on Open directives ===
 ; (Assets:Investment:Brokerage above is missing tax-account-type → ERROR)
 ; (Assets:Investment:IRA above has tax-account-type: roth → NO ERROR)
 ; (Assets:Checking above doesn't match account_pattern → NO ERROR)
+
+; ERROR: tax-account-type present on an account that doesn't match the pattern
+2026-01-01 open Expenses:MisplacedMeta
+  tax-account-type: "roth"
 
 ; === Section 8: required posting metadata (cost_center on Expenses:Billable) ===
 

@@ -153,7 +153,7 @@ pytest tests/
 - Validates metadata keys and values against typed schema
 - Supports type constraints (string, int, bool, date, Decimal)
 - Supports required fields and allowed_values constraints
-- Supports `account_pattern` to scope required fields to matching accounts (regex, matched from the start of the account name)
+- Supports `account_pattern` to scope fields to matching accounts (regex, matched from the start of the account name). On `posting`/`open`/`close`/`document`/`note`, a patterned field is only allowed where the account matches and is required there when `required: true`; declaring it on `transaction`/`event`/`commodity` is a load-time config error
 - Reports ParserErrors for schema violations
 
 ### For posting_tags

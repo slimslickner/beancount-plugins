@@ -9,6 +9,8 @@ from beancount.core import data
 from beancount_plugins.check_valid_metadata import (
     _account_pattern_matches,
     _compile_spec,
+    _entry_accounts,
+    check_valid_metadata,
 )
 
 SAMPLE_LEDGER = Path(__file__).parent / "sample.beancount"
@@ -326,14 +328,15 @@ def test_check_valid_metadata_missing_config(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-class TestTransactionAccountPattern:
-    """account_pattern on transaction-level required fields.
+class TestPostingAccountPatternReceipt:
+    """account_pattern on posting-level required fields.
 
-    receipt_id is required only when a posting matches "Expenses:Reimbursable".
+    receipt_id is required only on postings to "Expenses:Reimbursable", and
+    is rejected on postings that don't match the pattern.
     """
 
     def test_pattern_match_triggers_requirement(self, error_messages):
-        """receipt_id must be present when any posting matches the account_pattern."""
+        """receipt_id must be present when the posting matches the account_pattern."""
         assert any(
             "Missing required metadata 'receipt_id'" in m for m in error_messages
         )
@@ -346,11 +349,20 @@ class TestTransactionAccountPattern:
         assert count == 1
 
     def test_satisfied_pattern_no_error(self, error_messages):
-        """No receipt_id error when field is provided on the matching transaction."""
+        """No receipt_id error when field is provided on the matching posting."""
         count = sum(
             1 for m in error_messages if "Missing required metadata 'receipt_id'" in m
         )
         assert count == 1  # would be 2 if the satisfied transaction also fired
+
+    def test_present_on_non_matching_posting_errors(self, error_messages):
+        """receipt_id on Expenses:Travel (non-matching) is not allowed."""
+        assert any(
+            "Metadata 'receipt_id'" in m
+            and "only allowed on accounts matching" in m
+            and "Expenses:Travel" in m
+            for m in error_messages
+        )
 
 
 class TestOpenAccountPattern:
@@ -388,6 +400,15 @@ class TestOpenAccountPattern:
         """Assets:Checking doesn't match account_pattern, no error expected."""
         assert not any(
             "tax-account-type" in m and "Checking" in m for m in error_messages
+        )
+
+    def test_present_on_non_matching_account_errors(self, error_messages):
+        """tax-account-type on Expenses:MisplacedMeta is not allowed."""
+        assert any(
+            "Metadata 'tax-account-type'" in m
+            and "only allowed on accounts matching" in m
+            and "Expenses:MisplacedMeta" in m
+            for m in error_messages
         )
 
 
@@ -501,6 +522,206 @@ class TestAccountPatternBoundary:
         assert _account_pattern_matches(compiled, ["Liabilities:Loans"])
         assert _account_pattern_matches(compiled, ["Liabilities:Loans:Chase"])
         assert not _account_pattern_matches(compiled, ["Liabilities:LoansChase"])
+
+    def test_pattern_ending_with_colon_matches_subaccounts(self):
+        """A pattern consuming the trailing ':' is still a whole-component match."""
+        spec = {"required": True, "account_pattern": "^Expenses:"}
+        compiled = _compile_spec(spec)
+        assert _account_pattern_matches(compiled, ["Expenses:Groceries"])
+        assert not _account_pattern_matches(compiled, ["Expenses"])
+        assert not _account_pattern_matches(compiled, ["ExpensesChase"])
+
+    def test_negative_lookahead_pattern(self):
+        """'^Assets:(?!Property:)' should match Assets subaccounts except Property."""
+        spec = {"required": True, "account_pattern": "^Assets:(?!Property:)"}
+        compiled = _compile_spec(spec)
+        assert _account_pattern_matches(
+            compiled, ["Assets:Investment:Brokerage:Fidelity-Brokerage:Cash"]
+        )
+        assert _account_pattern_matches(compiled, ["Assets:Checking"])
+        assert not _account_pattern_matches(compiled, ["Assets:Property:House"])
+        assert not _account_pattern_matches(compiled, ["Liabilities:CreditCard"])
+
+
+class TestAccountPatternScope:
+    """account_pattern restricts a field to matching accounts (open/close/document/note)."""
+
+    def _load(self, tmp_path, schema_body, ledger_body):
+        schema = tmp_path / "metadata_schema.yaml"
+        schema.write_text(schema_body)
+        ledger = tmp_path / "test.beancount"
+        ledger.write_text(
+            'option "title" "Scope test"\n'
+            'option "operating_currency" "USD"\n'
+            'plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"\n'
+            "\n" + ledger_body
+        )
+        _, errors, _ = loader.load_file(str(ledger))
+        return [e.message for e in errors]
+
+    def test_open_matching_account_allowed(self, tmp_path):
+        """A patterned field on a matching Open account is accepted."""
+        messages = self._load(
+            tmp_path,
+            "metadata:\n"
+            "  open:\n"
+            "    code:\n"
+            "      type: string\n"
+            "      required: false\n"
+            '      account_pattern: "Assets:Investment"\n',
+            '2024-01-01 open Assets:Investment:Brokerage\n  code: "BRK"\n',
+        )
+        assert not any("only allowed on accounts matching" in m for m in messages)
+
+    def test_open_non_matching_account_rejected(self, tmp_path):
+        """A patterned field on a non-matching Open account errors."""
+        messages = self._load(
+            tmp_path,
+            "metadata:\n"
+            "  open:\n"
+            "    code:\n"
+            "      type: string\n"
+            "      required: false\n"
+            '      account_pattern: "Assets:Investment"\n',
+            '2024-01-01 open Expenses:Groceries\n  code: "BRK"\n',
+        )
+        assert any(
+            "Metadata 'code'" in m
+            and "only allowed on accounts matching" in m
+            and "Expenses:Groceries" in m
+            for m in messages
+        )
+
+    def test_optional_pattern_still_restricts(self, tmp_path):
+        """required: false only controls presence, not where the field may appear."""
+        messages = self._load(
+            tmp_path,
+            "metadata:\n"
+            "  open:\n"
+            "    code:\n"
+            "      type: string\n"
+            "      required: false\n"
+            '      account_pattern: "Assets:Investment"\n',
+            '2024-01-01 open Expenses:Groceries\n  code: "BRK"\n',
+        )
+        assert any("only allowed on accounts matching" in m for m in messages)
+
+    def test_close_non_matching_account_rejected(self, tmp_path):
+        """A patterned field on a non-matching Close account errors."""
+        messages = self._load(
+            tmp_path,
+            "metadata:\n"
+            "  close:\n"
+            "    reason:\n"
+            "      type: string\n"
+            "      required: false\n"
+            '      account_pattern: "Liabilities"\n',
+            "2024-01-01 open Expenses:Groceries\n"
+            "2024-12-31 close Expenses:Groceries\n"
+            '  reason: "done"\n',
+        )
+        assert any(
+            "Metadata 'reason'" in m
+            and "only allowed on accounts matching" in m
+            and "Expenses:Groceries" in m
+            for m in messages
+        )
+
+    def test_document_matching_account_allowed(self, tmp_path):
+        """A patterned field on a matching Document account is accepted."""
+        messages = self._load(
+            tmp_path,
+            "metadata:\n"
+            "  document:\n"
+            "    verified:\n"
+            "      type: bool\n"
+            "      required: false\n"
+            '      account_pattern: "Assets:Investment"\n',
+            "2024-01-01 open Assets:Investment:Brokerage\n"
+            '2024-02-01 document Assets:Investment:Brokerage "/tmp/stmt.pdf"\n'
+            "  verified: TRUE\n",
+        )
+        assert not any("only allowed on accounts matching" in m for m in messages)
+
+    def test_note_non_matching_account_rejected(self, tmp_path):
+        """A patterned field on a non-matching Note account errors."""
+        messages = self._load(
+            tmp_path,
+            "metadata:\n"
+            "  note:\n"
+            "    importance:\n"
+            "      type: string\n"
+            "      required: false\n"
+            '      account_pattern: "Assets:Investment"\n',
+            "2024-01-01 open Expenses:Groceries\n"
+            '2024-03-01 note Expenses:Groceries "why"\n'
+            '  importance: "high"\n',
+        )
+        assert any(
+            "Metadata 'importance'" in m
+            and "only allowed on accounts matching" in m
+            and "Expenses:Groceries" in m
+            for m in messages
+        )
+
+
+class TestAccountPatternConfigErrors:
+    """account_pattern on non-account-scoped sections is a load-time config error."""
+
+    def _messages(self, tmp_path, dtype):
+        schema = tmp_path / "metadata_schema.yaml"
+        schema.write_text(
+            "metadata:\n"
+            f"  {dtype}:\n"
+            "    foo:\n"
+            "      type: string\n"
+            "      required: false\n"
+            '      account_pattern: "Assets"\n'
+        )
+        options_map = {"filename": str(tmp_path / "test.beancount")}
+        _, errors = check_valid_metadata([], options_map, config="metadata_schema.yaml")
+        return [e.message for e in errors]
+
+    @pytest.mark.parametrize("dtype", ["transaction", "event", "commodity"])
+    def test_pattern_disallowed_section(self, tmp_path, dtype):
+        assert any(
+            f"account_pattern is not valid on '{dtype}' metadata 'foo'" in m
+            for m in self._messages(tmp_path, dtype)
+        )
+
+    @pytest.mark.parametrize("dtype", ["posting", "open", "close", "document", "note"])
+    def test_pattern_allowed_section(self, tmp_path, dtype):
+        assert not self._messages(tmp_path, dtype)
+
+
+class TestEntryAccounts:
+    """Unit tests for _entry_accounts."""
+
+    def test_transaction_returns_posting_accounts(self):
+        txn = data.Transaction(
+            meta={},
+            date=None,
+            flag="*",
+            payee=None,
+            narration="x",
+            tags=frozenset(),
+            links=frozenset(),
+            postings=[
+                data.Posting("Assets:Checking", None, None, None, None, None),
+                data.Posting("Expenses:Groceries", None, None, None, None, None),
+            ],
+        )
+        assert _entry_accounts(txn) == ["Assets:Checking", "Expenses:Groceries"]
+
+    def test_account_scoped_directives(self):
+        open_entry = data.Open(
+            meta={}, date=None, account="Assets:Checking", currencies=None, booking=None
+        )
+        assert _entry_accounts(open_entry) == ["Assets:Checking"]
+
+    def test_accountless_directive(self):
+        event = data.Event(meta={}, date=None, type="x", description="y")
+        assert _entry_accounts(event) == []
 
 
 # ---------------------------------------------------------------------------

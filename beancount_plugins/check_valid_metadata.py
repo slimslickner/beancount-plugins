@@ -13,7 +13,7 @@ WHAT IT DOES:
 - Enforces type constraints (string, int, bool, date, Decimal)
 - Enforces allowed_values constraints
 - Enforces pattern constraints (regex for strings)
-- Enforces account_pattern constraints (scope required fields to matching accounts)
+- Enforces account_pattern constraints (fields are only allowed on matching accounts)
 - Reports violations as parser errors with field context
 
 USAGE:
@@ -32,16 +32,16 @@ Create a metadata_schema.yaml file with:
           label: "Original payee name from import"
           type: string
           required: false
-        receipt_id:
-          label: "Receipt reference"
-          type: string
-          required: true
-          account_pattern: "Expenses:.*"  # Only required on Expenses accounts
       posting:
         tag:
           label: "Posting-level categorization"
           type: string
           allowed_values: [personal, business]
+        receipt_id:
+          label: "Receipt reference"
+          type: string
+          required: true
+          account_pattern: "Expenses:.*"  # Only allowed/required on Expenses postings
       open:
         tag-expected:
           label: "If true, transactions posting to this account require tags"
@@ -91,14 +91,23 @@ SCHEMA SPECIFICATION:
    - label: (string) Documentation of the field
    - type: (string) One of: string, int, bool, date, Decimal
    - required: (bool) If true, field must be present
-   - account_pattern: (string) Regex pattern to scope required fields to matching accounts
+   - account_pattern: (string) Regex pattern restricting the field to matching accounts
+     (only valid on posting, open, close, document, and note sections)
    - allowed_values: (list) If present, value must be in this list
    - pattern: (string) Regex pattern for string values only
 
 3. ACCOUNT PATTERN:
-    When account_pattern is set on a required field:
-    - For transaction-level metadata: required only if ANY posting account matches
-    - For posting-level metadata: required only if the specific posting account matches
+    account_pattern scopes a field to matching accounts. It is only allowed on
+    account-scoped sections: posting, open, close, document, and note. Declaring
+    it on transaction, event, or commodity is a configuration error.
+
+    When account_pattern is set on a field:
+    - The field is ONLY allowed where the account matches. Present on a
+      non-matching account -> error.
+    - If required is also true, the field is required only where the account
+      matches:
+      - For posting-level metadata: matches the specific posting account
+      - For open/close/document/note: matches the directive's account
     - Uses re.match() so the pattern matches from the start of the account name
       up to a whole account-component boundary (before a ':' or end of string).
       Examples:
@@ -107,7 +116,12 @@ SCHEMA SPECIFICATION:
       - "^(Expenses|Liabilities:Loans)" matches "Expenses",
         "Expenses:Groceries", "Liabilities:Loans", and "Liabilities:Loans:Chase",
         but not "Liabilities:LoansChase"
-    - If account_pattern is not set, the field is universally required
+      - "^Assets:(?!Property:)" matches "Assets:Investment:Brokerage",
+        "Assets:Checking", etc., but not "Assets:Property:House"
+      A pattern may consume the trailing ':' separator; the match is accepted as
+      long as it ends at a component boundary.
+    - If account_pattern is not set, the field may appear anywhere (and is
+      universally required when required is true)
 
 4. PLUGIN EXCEPTIONS:
    - allowed_prefix: Any key starting with this is skipped (e.g., "_" for internal Beancount keys)
@@ -126,6 +140,7 @@ Errors are reported with field context:
     your-file.bean:42: Invalid metadata key 'unknown_key' on transaction
     your-file.bean:42: Invalid value 'invalid' for posting metadata 'tag' (allowed: personal, business)
     your-file.bean:15: Invalid metadata key 'unknown_key' on Open directive for 'Assets:Checking'
+    your-file.bean:42: Metadata 'receipt_id' on posting directive (posting to 'Expenses:Travel') is only allowed on accounts matching 'Expenses:Reimbursable'
 
 COMPLEMENTARY PLUGINS:
 - check_valid_tags: Validates transaction tags against allowed list
@@ -152,6 +167,9 @@ __plugins__ = ("check_valid_metadata",)
 
 # System keys always skipped during validation
 _SYSTEM_KEYS = {"filename", "lineno"}
+
+# Schema sections on which account_pattern is meaningful (directives with an account)
+_ACCOUNT_PATTERN_LEVELS = ("posting", "open", "close", "document", "note")
 
 
 def _compile_spec(spec: dict) -> dict:
@@ -243,6 +261,30 @@ def check_valid_metadata(
     }
     exceptions = metadata_section.get("plugin_exceptions", [])
 
+    # Validate schema: account_pattern is only meaningful on account-scoped
+    # sections. Report every misdeclaration at load time before validating entries.
+    schema_errors: list[ParserError] = []
+    for dtype in _dtypes:
+        if dtype in _ACCOUNT_PATTERN_LEVELS:
+            continue
+        for key, spec in directive_schemas[dtype].items():
+            if isinstance(spec, dict) and "account_pattern" in spec:
+                schema_errors.append(
+                    ParserError(
+                        source={"filename": str(config_path), "lineno": 0},
+                        message=(
+                            f"account_pattern is not valid on '{dtype}' metadata "
+                            f"'{key}': account_pattern only applies to "
+                            f"{', '.join(_ACCOUNT_PATTERN_LEVELS)}"
+                        ),
+                        entry=None,
+                    )
+                )
+    if schema_errors:
+        errors.extend(schema_errors)
+        logger.warning("Found %d account_pattern schema errors", len(schema_errors))
+        return entries, errors
+
     # Build allowed keys for each directive type
     allowed_keys = {
         key: set(schema.keys()) for key, schema in directive_schemas.items()
@@ -299,6 +341,7 @@ def check_valid_metadata(
 
         schema = directive_schemas.get(directive_type, {})
         context = _get_directive_context(entry, directive_type)
+        accounts = _entry_accounts(entry)
         source = {
             "filename": entry.meta.get("filename", "unknown")
             if entry.meta
@@ -314,6 +357,7 @@ def check_valid_metadata(
             level=directive_type,
             source=source,
             context=context,
+            accounts=accounts,
             allowed_prefixes=allowed_prefixes,
             allowed_exception_keys=allowed_exception_keys,
         )
@@ -322,12 +366,6 @@ def check_valid_metadata(
 
         # Check for missing required directive-level metadata
         present_keys = set(entry.meta.keys()) - _SYSTEM_KEYS if entry.meta else set()
-        if isinstance(entry, data.Transaction):
-            accounts = [p.account for p in entry.postings]
-        elif isinstance(entry, (data.Open, data.Close, data.Document)):
-            accounts = [entry.account]
-        else:
-            accounts = []
         for req_key, req_spec in required_specs[directive_type].items():
             if req_key in present_keys:
                 continue
@@ -354,6 +392,7 @@ def check_valid_metadata(
                     level="posting",
                     source=source,
                     context=posting_context,
+                    accounts=[posting.account],
                     allowed_prefixes=allowed_prefixes,
                     allowed_exception_keys=allowed_exception_keys,
                 )
@@ -394,13 +433,15 @@ def _validate_metadata_keys(
     level: str,
     source: dict,
     context: str,
+    accounts: list[str],
     allowed_prefixes: list[str],
     allowed_exception_keys: set[str],
 ) -> list[ParserError]:
     """Validate metadata keys and values against schema.
 
     Checks each key in meta against allowed keys and exception rules,
-    then validates values against schema constraints.
+    then validates values against schema constraints. Keys with an
+    account_pattern are only allowed where one of the accounts matches.
 
     Args:
         meta: Metadata dict to validate (may be None)
@@ -409,6 +450,7 @@ def _validate_metadata_keys(
         level: Directive type name (for error messages)
         source: Pre-built source dict (filename/lineno) for error reporting
         context: Additional context string for error messages
+        accounts: Account names the metadata applies to (for account_pattern)
         allowed_prefixes: Prefixes that bypass validation
         allowed_exception_keys: Specific keys that bypass validation
 
@@ -438,9 +480,22 @@ def _validate_metadata_keys(
             )
             continue
 
-        value_error = _validate_metadata_value(
-            key, value, schema[key], level, source, context
-        )
+        spec = schema[key]
+        pattern: re.Pattern | None = spec.get("account_pattern")
+        if pattern and not _account_pattern_matches(spec, accounts):
+            errors.append(
+                ParserError(
+                    source=source,
+                    message=(
+                        f"Metadata '{key}' on {level} directive{context} is only "
+                        f"allowed on accounts matching '{pattern.pattern}'"
+                    ),
+                    entry=None,
+                )
+            )
+            continue
+
+        value_error = _validate_metadata_value(key, value, spec, level, source, context)
         if value_error:
             errors.append(value_error)
 
@@ -450,17 +505,19 @@ def _validate_metadata_keys(
 def _account_pattern_matches(spec: dict, accounts: list[str]) -> bool:
     """Check if any account matches the spec's account_pattern.
 
-    If the spec has no account_pattern, returns True (universally required).
-    Otherwise, returns True if at least one account matches the pattern from
-    the start of the account name up to a whole account-component boundary
-    (end of string or just before a ':').
+    Used both to decide whether a required field must be present and whether
+    a patterned field is allowed. If the spec has no account_pattern, returns
+    True (universally allowed/required). Otherwise, returns True if at least
+    one account matches the pattern from the start of the account name up to a
+    whole account-component boundary (end of string, just before a ':', or
+    just after a ':' when the pattern consumes the separator).
 
     Args:
         spec: Compiled schema spec dict; account_pattern is a re.Pattern or absent
         accounts: List of account names to check
 
     Returns:
-        True if the requirement applies
+        True if the pattern applies (or no pattern is set)
     """
     pattern: re.Pattern | None = spec.get("account_pattern")
     if not pattern:
@@ -471,10 +528,33 @@ def _account_pattern_matches(spec: dict, accounts: list[str]) -> bool:
             continue
         # The matched prefix must end at a whole component, not in the
         # middle of an account component like 'Liabilities:LoansChase'.
+        # A boundary is end-of-string, a ':' immediately after the match, or
+        # a ':' as the match's last character (e.g. a pattern ending in ':').
         end = match.end()
         if end == len(account) or account[end] == ":":
             return True
+        if end > 0 and account[end - 1] == ":":
+            return True
     return False
+
+
+def _entry_accounts(entry: data.Directive) -> list[str]:
+    """Return the account names a directive's metadata applies to.
+
+    Transactions span many postings; account-scoped directives carry a single
+    account; the rest have none.
+
+    Args:
+        entry: The directive entry
+
+    Returns:
+        List of account names (empty when the directive has no account)
+    """
+    if isinstance(entry, data.Transaction):
+        return [p.account for p in entry.postings]
+    if isinstance(entry, (data.Open, data.Close, data.Document, data.Note)):
+        return [entry.account]
+    return []
 
 
 def _get_directive_context(entry: data.Directive, directive_type: str) -> str:
@@ -487,8 +567,8 @@ def _get_directive_context(entry: data.Directive, directive_type: str) -> str:
     Returns:
         Context string for error messages
     """
-    if directive_type in {"open", "close"}:
-        if isinstance(entry, (data.Open, data.Close)):
+    if directive_type in {"open", "close", "note"}:
+        if isinstance(entry, (data.Open, data.Close, data.Note)):
             return f" for '{entry.account}'"
     elif directive_type == "document":
         if isinstance(entry, data.Document):

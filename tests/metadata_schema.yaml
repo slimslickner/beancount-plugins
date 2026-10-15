@@ -4,11 +4,6 @@ metadata:
       label: "Original payee name from import"
       type: string
       required: false
-    receipt_id:
-      label: "Receipt reference for reimbursable expenses"
-      type: string
-      required: true
-      account_pattern: "Expenses:Reimbursable"
     ref_code:
       label: "Reference code following format REF-NNN"
       type: string
@@ -29,6 +24,11 @@ metadata:
       label: "Space-separated posting tags"
       type: string
       required: false
+    receipt_id:
+      label: "Receipt reference for reimbursable expenses"
+      type: string
+      required: true
+      account_pattern: "Expenses:Reimbursable"
     cost_center:
       label: "Cost center for billable postings"
       type: string
