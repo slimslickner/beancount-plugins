@@ -419,6 +419,163 @@ class TestCheckValidMetadata:
         assert any("Invalid type" in m and "is_billable" in m for m in error_messages)
 
 
+class TestInlineMetadataConfig:
+    """The metadata schema may be an inline dict literal instead of a file path."""
+
+    def _load(self, tmp_path, inline_config, ledger_body=""):
+        ledger = tmp_path / "test.beancount"
+        ledger.write_text(
+            'option "title" "Inline metadata config test"\n'
+            'option "operating_currency" "USD"\n'
+            'plugin "beancount_plugins.check_valid_metadata" '
+            f'"{inline_config}"\n'
+            "\n" + ledger_body
+        )
+        _, errors, _ = loader.load_file(str(ledger))
+        return [e.message for e in errors]
+
+    def test_inline_valid_metadata_passes(self, tmp_path):
+        """A declared inline key that is used produces no error."""
+        messages = self._load(
+            tmp_path,
+            "{ 'metadata': { 'transaction': { 'source_payee': "
+            "{ 'label': 'Original payee', 'type': 'string' } } } }",
+            '2024-01-01 * "x"\n'
+            '    source_payee: "Store"\n'
+            "    Expenses:Travel  1.00 USD\n"
+            "    Assets:Checking  -1.00 USD\n",
+        )
+        assert not any(
+            ("Invalid metadata key" in m and "source_payee" in m) or "never used" in m
+            for m in messages
+        )
+
+    def test_inline_unknown_key_errors(self, tmp_path):
+        """An undeclared key is flagged as invalid."""
+        messages = self._load(
+            tmp_path,
+            "{ 'metadata': { 'transaction': { 'source_payee': "
+            "{ 'label': 'Original payee' } } } }",
+            '2024-01-01 * "x"\n'
+            '    bogus_field: "x"\n'
+            "    Expenses:Travel  1.00 USD\n"
+            "    Assets:Checking  -1.00 USD\n",
+        )
+        assert any("Invalid metadata key 'bogus_field'" in m for m in messages)
+
+    def test_inline_type_enforced(self, tmp_path):
+        """The type constraint from the inline dict is enforced."""
+        messages = self._load(
+            tmp_path,
+            "{ 'metadata': { 'transaction': { 'is_billable': { 'type': 'bool' } } } }",
+            '2024-01-01 * "x"\n'
+            '    is_billable: "yes"\n'
+            "    Expenses:Travel  1.00 USD\n"
+            "    Assets:Checking  -1.00 USD\n",
+        )
+        assert any("Invalid type" in m and "is_billable" in m for m in messages)
+
+    def test_inline_allowed_values_enforced(self, tmp_path):
+        """allowed_values from the inline dict is enforced."""
+        messages = self._load(
+            tmp_path,
+            "{ 'metadata': { 'posting': { 'tag': "
+            "{ 'allowed_values': ['personal', 'business'] } } } }",
+            '2024-01-01 * "x"\n'
+            "    Expenses:Travel  1.00 USD\n"
+            '        tag: "invalid-category"\n'
+            "    Assets:Checking  -1.00 USD\n",
+        )
+        assert any("Invalid value 'invalid-category'" in m for m in messages)
+
+    def test_inline_required_missing_errors(self, tmp_path):
+        """A required key declared inline must be present."""
+        messages = self._load(
+            tmp_path,
+            "{ 'metadata': { 'posting': { 'receipt_id': { 'required': True } } } }",
+            '2024-01-01 * "x"\n'
+            "    Expenses:Travel  1.00 USD\n"
+            "    Assets:Checking  -1.00 USD\n",
+        )
+        assert any("Missing required metadata 'receipt_id'" in m for m in messages)
+
+    def test_inline_account_pattern_scoping(self, tmp_path):
+        """account_pattern from the inline dict scopes required fields."""
+        messages = self._load(
+            tmp_path,
+            "{ 'metadata': { 'posting': { 'receipt_id': "
+            "{ 'required': True, 'account_pattern': 'Expenses:Reimbursable' } } } }",
+            '2024-01-01 * "x"\n'
+            "    Expenses:Reimbursable  1.00 USD\n"
+            "    Assets:Checking  -1.00 USD\n",
+        )
+        assert any("Missing required metadata 'receipt_id'" in m for m in messages)
+
+    def test_inline_unused_key_errors(self, tmp_path):
+        """A declared inline key that never appears is flagged as unused."""
+        messages = self._load(
+            tmp_path,
+            "{ 'metadata': { 'transaction': { 'never_used': "
+            "{ 'label': 'Never used' } } } }",
+        )
+        assert any(
+            "check_valid_metadata: Declared metadata key 'never_used' in "
+            "'transaction' schema is never used" in m
+            for m in messages
+        )
+
+    def test_inline_invalid_syntax_errors(self, tmp_path):
+        """A malformed dict literal produces a descriptive config error."""
+        messages = self._load(tmp_path, "{ 'metadata':")
+        assert any("Invalid inline config" in m for m in messages)
+
+    def test_inline_lowercase_bool_errors(self, tmp_path):
+        """Booleans must be Python literals; YAML/JSON 'true' is rejected."""
+        messages = self._load(
+            tmp_path,
+            "{ 'metadata': { 'posting': { 'receipt_id': { 'required': true } } } }",
+        )
+        assert any("Invalid inline config" in m for m in messages)
+
+    def test_inline_non_dict_metadata_errors(self, tmp_path):
+        """A non-dict 'metadata' value produces a descriptive config error."""
+        messages = self._load(tmp_path, "{ 'metadata': ['transaction'] }")
+        assert any("'metadata' must be a dict" in m for m in messages)
+
+    def test_inline_non_dict_config_errors(self, tmp_path):
+        """An inline config that is not a dict produces a config error."""
+        messages = self._load(tmp_path, "{1, 2}")
+        assert any("config must be a dict" in m for m in messages)
+
+    def test_file_path_still_supported(self, tmp_path):
+        """A plain filename is still treated as a YAML file path."""
+        config = tmp_path / "metadata_schema.yaml"
+        config.write_text(
+            "metadata:\n"
+            "  transaction:\n"
+            "    source_payee:\n"
+            "      label: Original payee\n"
+            "      type: string\n"
+        )
+        ledger = tmp_path / "test.beancount"
+        ledger.write_text(
+            'option "title" "Path still works"\n'
+            'option "operating_currency" "USD"\n'
+            'plugin "beancount_plugins.check_valid_metadata" "metadata_schema.yaml"\n'
+            "\n"
+            '2024-01-01 * "x"\n'
+            '    source_payee: "Store"\n'
+            "    Expenses:Travel  1.00 USD\n"
+            "    Assets:Checking  -1.00 USD\n"
+        )
+        _, errors, _ = loader.load_file(str(ledger))
+        messages = [e.message for e in errors]
+        assert not any(
+            ("Invalid metadata key" in m and "source_payee" in m) or "never used" in m
+            for m in messages
+        )
+
+
 # ---------------------------------------------------------------------------
 # promote_account_metadata plugin
 # ---------------------------------------------------------------------------
