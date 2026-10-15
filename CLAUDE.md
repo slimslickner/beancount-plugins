@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Python package providing custom plugins for **Beancount**, a text-based accounting system. The package contains ten plugins:
+This is a Python package providing custom plugins for **Beancount**, a text-based accounting system. The package contains twelve plugins:
 
 1. **zerosum_transaction_matcher** - Automatically matches and enriches transfer postings between accounts with metadata
 2. **check_missing_tags** - Validates that transactions have required tags based on account configuration
@@ -16,6 +16,8 @@ This is a Python package providing custom plugins for **Beancount**, a text-base
 8. **missing_contribution_year** - Errors on retirement contributions whose receiving posting lacks a `contribution-year` metadata key; requires a "destination + counterparty" pair to qualify so random asset movements don't trip it
 9. **promote_account_metadata** - Copies metadata from each account's Open directive onto postings for that account (supports `whitelist` / `blacklist` config; load *before* `check_valid_metadata` if you want promoted keys validated)
 10. **implicit_prices_flagged** - Drop-in replacement for Beancount's built-in `implicit_prices` that honors a per-posting `no-implicit-price: TRUE` opt-out for cost-derived prices (e.g. in-kind transfers)
+11. **block_transactions** - Errors on any posting to an account whose Open directive sets `block-transactions: TRUE`; matching is exact, so sub-accounts remain usable (useful for parent accounts that exist only to attach Fava documents)
+12. **aggregate_account_metadata** - Derives one or more aggregated metadata keys on Open directives from a source metadata key via a value mapping (e.g. `account-type` → `asset-class`); load *before* `promote_account_metadata` to flow derived keys down to postings
 
 The plugins are designed to be loaded into a Beancount ledger file and process transactions at load time.
 
@@ -31,8 +33,9 @@ Most plugins follow a two-phase architecture:
 ### Phase 2: Processing
 - Plugins process transactions and either:
   - Add metadata to postings (`zerosum_transaction_matcher`, `promote_account_metadata`, `posting_tags`)
+  - Add metadata to directives (`aggregate_account_metadata` writes derived keys back onto Open directives)
   - Synthesize new entries (`implicit_prices_flagged` injects `Price` directives)
-  - Report validation errors as `ParserError`s (`check_missing_tags`, `check_missing_links`, `check_valid_tags`, `check_valid_metadata`, `transfer_remove_payee`, `missing_contribution_year`)
+  - Report validation errors as `ParserError`s (`check_missing_tags`, `check_missing_links`, `check_valid_tags`, `check_valid_metadata`, `transfer_remove_payee`, `missing_contribution_year`, `block_transactions`, `aggregate_account_metadata`)
 
 **Key Insight**: This pattern allows plugins to operate efficiently without nested lookups.
 
@@ -94,16 +97,26 @@ All three commands must complete with zero errors before committing changes. If 
   - Key function: `add_implicit_prices_flagged()` - main plugin entry point
   - Honors per-posting `no-implicit-price: TRUE` metadata to skip cost-derived price synthesis
   - **Use instead of, not alongside, `beancount.plugins.implicit_prices`**
+- **`beancount_plugins/block_transactions.py`** - Blocked-account guard plugin
+  - Key function: `block_transactions()` - main plugin entry point
+  - Scans Open directives for `block-transactions: TRUE` and errors on any posting to that exact account
+  - No config required; opt in per account
+- **`beancount_plugins/aggregate_account_metadata.py`** - Open-metadata aggregation plugin
+  - Key function: `aggregate_account_metadata()` - main plugin entry point
+  - Requires inline dict config with an `aggregations` map (derived key → source key + `maps`)
+  - Open-directive-only; load *before* `promote_account_metadata` to flow derived keys down to postings
 - **`pyproject.toml`** - Package metadata and dependencies (Python 3.13+, Beancount ≥ 3.2.0)
 
 ## How to Test
 
-Tests are in the `tests/` directory and use pytest. Most plugins share `tests/test_plugins.py`; three plugins have dedicated test files because their surface area is larger or independent of the shared fixtures:
+Tests are in the `tests/` directory and use pytest. Most plugins share `tests/test_plugins.py`; five plugins have dedicated test files because their surface area is larger or independent of the shared fixtures:
 
 - `tests/test_plugins.py` — `posting_tags`, `check_missing_tags`, `check_missing_links`, `check_valid_tags`, `check_valid_metadata`, `transfer_remove_payee`, `promote_account_metadata`, `missing_contribution_year`
 - `tests/test_implicit_prices_flagged.py` — `implicit_prices_flagged` only
 - `tests/test_missing_contribution_year.py` — deep coverage of `missing_contribution_year` config parsing, exact-match vs regex, account validation, performance
 - `tests/test_promote_account_metadata.py` — config parsing, whitelist/blacklist, conflict resolution
+- `tests/test_block_transactions.py` — blocked vs allowed postings, exact-match sub-account behavior, error locations
+- `tests/test_aggregate_account_metadata.py` — config parsing/validation, strict vs default mode, coverage checks, conflict resolution
 
 Shared fixtures: `tests/sample.beancount` (sample ledger), `tests/metadata_schema.yaml`, `tests/tags.yaml`.
 
@@ -176,6 +189,18 @@ pytest tests/
 - Honors per-posting `no-implicit-price: TRUE` metadata to skip cost-derived price synthesis (e.g. in-kind transfers whose cost basis is not today's market price)
 - Injects synthesized `Price` entries tagged with `__implicit_prices__: from_price` or `from_cost`
 
+### For block_transactions
+- No config required; opt in per account with `block-transactions: TRUE` on its Open directive
+- Matching is exact, so a blocked parent account does not block its sub-accounts
+- Emits a ParserError per offending posting; the ledger fails to load until fixed
+
+### For aggregate_account_metadata
+- Requires an inline Python-dict config with an `aggregations` map; one config can declare several derived keys at once
+- Each aggregation names a derived key, a `source` metadata key, an optional `mode` (`'strict'` default, or `'default'` with a required `default` fallback), and a `maps` dict of aggregated value → list of source values
+- Open-directive-only: reads the source key from the Open and writes the derived key back onto the same Open
+- Existing derived keys win on conflict; a WARNING is logged (visible with `bean-check -v`)
+- Load *before* `promote_account_metadata` to flow derived keys down to postings, and *before* `check_valid_metadata` with the derived keys present in the schema's `open:` section
+
 ## Configuration Files
 
 Some plugins require configuration files:
@@ -187,6 +212,9 @@ Other plugins accept an optional inline Python-dict literal as a second argument
 
 - **`promote_account_metadata`** — `{'whitelist': 'tax-treatment'}` or `{'blacklist': ['tag-expected', 'link-expected']}`
 - **`missing_contribution_year`** — `{'destination_accounts': [...], 'destination_patterns': [...], 'counterparty_accounts': [...]}`
+- **`aggregate_account_metadata`** — `{'aggregations': {'asset-class': {'source': 'account-type', 'maps': {'taxable': ['checking', 'savings']}}}}`
+
+The remaining plugins take no config: `block_transactions` opts in per account via `block-transactions: TRUE` on its Open directive, while `posting_tags`, `transfer_remove_payee`, and `implicit_prices_flagged` are configured per posting or not at all.
 
 ## Git Conventions
 
