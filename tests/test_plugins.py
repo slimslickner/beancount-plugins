@@ -275,6 +275,109 @@ class TestUnusedTags:
         assert unused[0].source["lineno"] == 0
 
 
+class TestInlineTagsConfig:
+    """The tags config may be an inline dict literal instead of a file path."""
+
+    def _load(self, tmp_path, inline_config, ledger_body=""):
+        ledger = tmp_path / "test.beancount"
+        ledger.write_text(
+            'option "title" "Inline tags config test"\n'
+            'option "operating_currency" "USD"\n'
+            'plugin "beancount_plugins.check_valid_tags" '
+            f'"{inline_config}"\n'
+            "\n" + ledger_body
+        )
+        _, errors, _ = loader.load_file(str(ledger))
+        return [e.message for e in errors]
+
+    def test_inline_valid_tag_passes(self, tmp_path):
+        """A tag declared inline and used in the ledger produces no error."""
+        messages = self._load(
+            tmp_path,
+            "{ 'tags': { 'travel': { 'label': 'Travel' } } }",
+            '2024-01-01 * "x" #travel\n'
+            "    Expenses:Travel  1.00 USD\n"
+            "    Assets:Checking  -1.00 USD\n",
+        )
+        assert not any("never used" in m or "Undefined tag" in m for m in messages)
+
+    def test_inline_undefined_tag_errors(self, tmp_path):
+        """A tag not declared in the inline dict is flagged as undefined."""
+        messages = self._load(
+            tmp_path,
+            "{ 'tags': { 'travel': { 'label': 'Travel' } } }",
+            '2024-01-01 * "x" #travel #mystery\n'
+            "    Expenses:Travel  1.00 USD\n"
+            "    Assets:Checking  -1.00 USD\n",
+        )
+        assert any("Undefined tag '#mystery'" in m for m in messages)
+
+    def test_inline_require_link_enforced(self, tmp_path):
+        """require_link from the inline dict is enforced."""
+        messages = self._load(
+            tmp_path,
+            "{ 'tags': { 'reimbursable': { 'require_link': True } } }",
+            '2024-01-01 * "x" #reimbursable\n'
+            "    Expenses:Travel  1.00 USD\n"
+            "    Assets:Checking  -1.00 USD\n",
+        )
+        assert any("'#reimbursable' requires a link" in m for m in messages)
+
+    def test_inline_allow_unused_passes(self, tmp_path):
+        """allow_unused from the inline dict exempts a dormant tag."""
+        messages = self._load(
+            tmp_path,
+            "{ 'tags': { 'pending': { 'allow_unused': True } } }",
+        )
+        assert not any("never used" in m for m in messages)
+
+    def test_inline_unused_tag_errors(self, tmp_path):
+        """A declared inline tag that never appears is flagged as unused."""
+        messages = self._load(
+            tmp_path,
+            "{ 'tags': { 'never_used': { 'label': 'Never used' } } }",
+        )
+        assert any(
+            "check_valid_tags: Declared tag '#never_used' is never used" in m
+            for m in messages
+        )
+
+    def test_inline_invalid_syntax_errors(self, tmp_path):
+        """A malformed dict literal produces a descriptive config error."""
+        messages = self._load(tmp_path, "{ 'tags':")
+        assert any("Invalid inline config" in m for m in messages)
+
+    def test_inline_lowercase_bool_errors(self, tmp_path):
+        """Booleans must be Python literals; YAML/JSON 'true' is rejected."""
+        messages = self._load(
+            tmp_path, "{ 'tags': { 'travel': { 'allow_unused': true } } }"
+        )
+        assert any("Invalid inline config" in m for m in messages)
+
+    def test_inline_non_dict_tags_errors(self, tmp_path):
+        """A non-dict 'tags' value produces a descriptive config error."""
+        messages = self._load(tmp_path, "{ 'tags': ['travel'] }")
+        assert any("'tags' must be a dict" in m for m in messages)
+
+    def test_file_path_still_supported(self, tmp_path):
+        """A plain filename is still treated as a YAML file path."""
+        config = tmp_path / "tags.yaml"
+        config.write_text('tags:\n  travel:\n    label: "Travel"\n')
+        ledger = tmp_path / "test.beancount"
+        ledger.write_text(
+            'option "title" "Path still works"\n'
+            'option "operating_currency" "USD"\n'
+            'plugin "beancount_plugins.check_valid_tags" "tags.yaml"\n'
+            "\n"
+            '2024-01-01 * "x" #travel\n'
+            "    Expenses:Travel  1.00 USD\n"
+            "    Assets:Checking  -1.00 USD\n"
+        )
+        _, errors, _ = loader.load_file(str(ledger))
+        messages = [e.message for e in errors]
+        assert not any("Undefined tag" in m or "never used" in m for m in messages)
+
+
 # ---------------------------------------------------------------------------
 # check_valid_metadata plugin
 # ---------------------------------------------------------------------------
