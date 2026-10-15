@@ -377,6 +377,29 @@ class TestInlineTagsConfig:
         messages = [e.message for e in errors]
         assert not any("Undefined tag" in m or "never used" in m for m in messages)
 
+    def test_yaml_block_not_treated_as_path(self, tmp_path):
+        """A multi-line YAML block pasted as config is rejected cleanly.
+
+        Regression: a config not starting with '{' used to be passed to
+        Path.exists(), which raises OSError(ENAMETOOLONG) on macOS and aborted
+        the whole plugin with 'Error applying plugin ... File name too long'.
+        """
+        messages = self._load(tmp_path, "tags:\n  travel:\n    label: Travel")
+        assert any(
+            "neither a valid inline dict literal nor a usable file path" in m
+            for m in messages
+        )
+        assert not any("Error applying plugin" in m for m in messages)
+
+    def test_overlong_config_not_treated_as_path(self, tmp_path):
+        """A very long non-path config is rejected, not read from the filesystem."""
+        messages = self._load(tmp_path, "x" * 400)
+        assert any(
+            "neither a valid inline dict literal nor a usable file path" in m
+            for m in messages
+        )
+        assert not any("Error applying plugin" in m for m in messages)
+
 
 # ---------------------------------------------------------------------------
 # check_valid_metadata plugin
@@ -574,6 +597,32 @@ class TestInlineMetadataConfig:
             ("Invalid metadata key" in m and "source_payee" in m) or "never used" in m
             for m in messages
         )
+
+    def test_yaml_block_not_treated_as_path(self, tmp_path):
+        """A multi-line YAML block pasted as config is rejected cleanly.
+
+        Regression: a config not starting with '{' used to be passed to
+        Path.exists(), which raises OSError(ENAMETOOLONG) on macOS and aborted
+        the whole plugin with 'Error applying plugin ... File name too long'.
+        """
+        messages = self._load(
+            tmp_path,
+            "metadata:\n  transaction:\n    source_payee:\n      type: string",
+        )
+        assert any(
+            "neither a valid inline dict literal nor a usable file path" in m
+            for m in messages
+        )
+        assert not any("Error applying plugin" in m for m in messages)
+
+    def test_overlong_config_not_treated_as_path(self, tmp_path):
+        """A very long non-path config is rejected, not read from the filesystem."""
+        messages = self._load(tmp_path, "x" * 400)
+        assert any(
+            "neither a valid inline dict literal nor a usable file path" in m
+            for m in messages
+        )
+        assert not any("Error applying plugin" in m for m in messages)
 
 
 # ---------------------------------------------------------------------------

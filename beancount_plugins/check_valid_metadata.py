@@ -291,6 +291,31 @@ def _load_config(
 
         return parsed, _INLINE_CONFIG_LABEL, errors
 
+    # Not an inline dict. Guard against config strings that plainly cannot be
+    # file paths: a stray literal (e.g. a YAML block pasted inline, or an inline
+    # schema whose leading '{' was lost) would otherwise be handed to the
+    # filesystem, where Path.exists()/open() raise OSError(ENAMETOOLONG) on some
+    # platforms and abort the whole plugin with an opaque traceback. Only the
+    # component check matches the OS limit, so long-but-valid absolute paths
+    # still work.
+    if config:
+        _parts = config.replace("\\", "/").split("/")
+        if "\n" in config or any(len(part) > 255 for part in _parts):
+            errors.append(
+                ParserError(
+                    source={"filename": _INLINE_CONFIG_LABEL, "lineno": 0},
+                    message=(
+                        "check_valid_metadata: config is neither a valid inline "
+                        "dict literal nor a usable file path (it contains newlines "
+                        "or a path component over 255 characters). Use an inline "
+                        "Python dict literal starting with '{', or a path to "
+                        "metadata_schema.yaml."
+                    ),
+                    entry=None,
+                )
+            )
+            return {}, _INLINE_CONFIG_LABEL, errors
+
     # File-path mode (default or explicit).
     if config:
         config_path = Path(config)
@@ -299,18 +324,18 @@ def _load_config(
     else:
         config_path = ledger_dir / "metadata_schema.yaml"
 
-    if not config_path.exists():
-        errors.append(
-            ParserError(
-                source={"filename": "metadata_schema.yaml", "lineno": 0},
-                message=f"Metadata schema file not found: {config_path}",
-                entry=None,
-            )
-        )
-        logger.warning("Metadata schema file not found: %s", config_path)
-        return {}, str(config_path), errors
-
     try:
+        if not config_path.exists():
+            errors.append(
+                ParserError(
+                    source={"filename": "metadata_schema.yaml", "lineno": 0},
+                    message=f"Metadata schema file not found: {config_path}",
+                    entry=None,
+                )
+            )
+            logger.warning("Metadata schema file not found: %s", config_path)
+            return {}, str(config_path), errors
+
         with open(config_path, encoding="utf-8") as f:
             config_data = yaml.safe_load(f) or {}
     except Exception as e:
