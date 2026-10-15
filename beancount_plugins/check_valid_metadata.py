@@ -6,7 +6,7 @@ ensuring data quality and consistency. It validates metadata key names,
 required vs. optional fields, and enforces type constraints and allowed values.
 
 WHAT IT DOES:
-- Loads metadata schema from a YAML configuration file
+- Loads metadata schema from a YAML configuration file or an inline dict literal
 - Validates metadata on all directive types: Transaction, Open, Close, Document, Event, Note, Commodity
 - Validates transaction-level metadata keys and values
 - Validates posting-level metadata keys and values (transactions only)
@@ -22,8 +22,36 @@ USAGE:
 In your main ledger file:
     plugin "beancount_plugins.check_valid_metadata"
 
-Optional config (specify alternate schema file):
+Optional config. The second argument is dual-mode: it may be a path to a
+metadata_schema.yaml file, OR an inline Python dict literal mirroring the
+file's shape. The mode is chosen by a simple rule — if the argument (after
+stripping whitespace) starts with '{', it is parsed as an inline dict;
+otherwise it is treated as a file path.
+
+Alternate config file:
     plugin "beancount_plugins.check_valid_metadata" "/path/to/metadata_schema.yaml"
+
+Inline config (Python dict literal, top-level 'metadata' key required):
+    plugin "beancount_plugins.check_valid_metadata" "{
+        'metadata': {
+            'posting': {
+                'tag': {
+                    'label': 'Posting-level categorization',
+                    'type': 'string',
+                    'allowed_values': ['personal', 'business']
+                }
+            }
+        }
+    }"
+
+The inline dict uses Python literal syntax (parsed via ast.literal_eval):
+single or double quotes, and booleans as True/False — not YAML/JSON's
+true/false. Small schemas can live in the ledger; a YAML file remains the
+better option for large schemas (this author's is ~490 lines).
+
+DEFAULT:
+When no config is given, metadata_schema.yaml is loaded from the ledger
+file's directory.
 
 CONFIG FILE FORMAT:
 Create a metadata_schema.yaml file with:
@@ -173,6 +201,7 @@ COMPLEMENTARY PLUGINS:
 __copyright__ = "Copyright (C) 2026 slimslickner"
 __license__ = "GNU GPLv2"
 
+import ast
 import logging
 import re
 from datetime import date
@@ -193,6 +222,109 @@ _SYSTEM_KEYS = {"filename", "lineno"}
 
 # Schema sections on which account_pattern is meaningful (directives with an account)
 _ACCOUNT_PATTERN_LEVELS = ("posting", "open", "close", "document", "note")
+
+# Label used as the ParserError source for inline-config problems.
+_INLINE_CONFIG_LABEL = "plugin config"
+
+
+def _load_config(
+    config: str | None,
+    ledger_dir: Path,
+) -> tuple[dict[str, Any], str, list[ParserError]]:
+    """Load metadata schema config from either an inline dict or a YAML file path.
+
+    The second plugin argument is dual-mode: if it starts with '{' it is parsed
+    as an inline Python dict literal; otherwise it is treated as a path to a
+    metadata_schema.yaml file (resolved relative to the ledger directory when
+    relative). When no config is supplied, metadata_schema.yaml is loaded from
+    the ledger directory.
+
+    Returns (config_data, config_label, errors). config_label names the config
+    source for schema-level error messages. On error config_data is an empty
+    dict and the caller should return the entries unchanged.
+    """
+    errors: list[ParserError] = []
+
+    if config and config.strip().startswith("{"):
+        try:
+            parsed: Any = ast.literal_eval(config)
+        except (ValueError, SyntaxError) as e:
+            errors.append(
+                ParserError(
+                    source={"filename": _INLINE_CONFIG_LABEL, "lineno": 0},
+                    message=(
+                        f"check_valid_metadata: Invalid inline config: {e}. "
+                        "Use Python literal syntax (single or double quotes, "
+                        "True/False — not YAML/JSON true/false)."
+                    ),
+                    entry=None,
+                )
+            )
+            return {}, _INLINE_CONFIG_LABEL, errors
+
+        if not isinstance(parsed, dict):
+            errors.append(
+                ParserError(
+                    source={"filename": _INLINE_CONFIG_LABEL, "lineno": 0},
+                    message=(
+                        "check_valid_metadata: config must be a dict, "
+                        f"got {type(parsed).__name__}"
+                    ),
+                    entry=None,
+                )
+            )
+            return {}, _INLINE_CONFIG_LABEL, errors
+
+        metadata_section = parsed.get("metadata")
+        if metadata_section is not None and not isinstance(metadata_section, dict):
+            errors.append(
+                ParserError(
+                    source={"filename": _INLINE_CONFIG_LABEL, "lineno": 0},
+                    message=(
+                        "check_valid_metadata: 'metadata' must be a dict of "
+                        f"sections, got {type(metadata_section).__name__}"
+                    ),
+                    entry=None,
+                )
+            )
+            return {}, _INLINE_CONFIG_LABEL, errors
+
+        return parsed, _INLINE_CONFIG_LABEL, errors
+
+    # File-path mode (default or explicit).
+    if config:
+        config_path = Path(config)
+        if not config_path.is_absolute():
+            config_path = ledger_dir / config_path
+    else:
+        config_path = ledger_dir / "metadata_schema.yaml"
+
+    if not config_path.exists():
+        errors.append(
+            ParserError(
+                source={"filename": "metadata_schema.yaml", "lineno": 0},
+                message=f"Metadata schema file not found: {config_path}",
+                entry=None,
+            )
+        )
+        logger.warning("Metadata schema file not found: %s", config_path)
+        return {}, str(config_path), errors
+
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            config_data = yaml.safe_load(f) or {}
+    except Exception as e:
+        errors.append(
+            ParserError(
+                source={"filename": str(config_path), "lineno": 0},
+                message=f"Failed to load metadata schema: {e}",
+                entry=None,
+            )
+        )
+        logger.error("Failed to load metadata schema: %s", e)
+        return {}, str(config_path), errors
+
+    return config_data, str(config_path), errors
 
 
 def _compile_spec(spec: dict) -> dict:
@@ -223,46 +355,22 @@ def check_valid_metadata(
     Args:
         entries: List of beancount entries
         options_map: Beancount options map
-        config: Optional config path (defaults to metadata_schema.yaml)
+        config: Optional dual-mode config — an inline Python dict literal (must
+            start with '{' and carry a top-level 'metadata' key) or a path to a
+            metadata_schema.yaml file. Defaults to metadata_schema.yaml in the
+            ledger directory.
 
     Returns:
         Tuple of (entries_unchanged, errors)
     """
     errors: list[ParserError] = []
 
-    # Determine config file path, resolved relative to the ledger file's directory.
+    # Load configuration: inline dict literal or metadata_schema.yaml file path.
     ledger_filename = options_map.get("filename", "unknown")
     ledger_dir = Path(options_map.get("filename", "")).parent
-    if config:
-        config_path = Path(config)
-        if not config_path.is_absolute():
-            config_path = ledger_dir / config_path
-    else:
-        config_path = ledger_dir / "metadata_schema.yaml"
-
-    # Load configuration
-    if not config_path.exists():
-        error = ParserError(
-            source={"filename": "metadata_schema.yaml", "lineno": 0},
-            message=f"Metadata schema file not found: {config_path}",
-            entry=None,
-        )
-        errors.append(error)
-        logger.warning("Metadata schema file not found: %s", config_path)
-        return entries, errors
-
-    try:
-        with open(config_path, encoding="utf-8") as f:
-            config_data = yaml.safe_load(f) or {}
-    except Exception as e:
-        error = ParserError(
-            source={"filename": str(config_path), "lineno": 0},
-            message=f"Failed to load metadata schema: {e}",
-            entry=None,
-        )
-        errors.append(error)
-        logger.error("Failed to load metadata schema: %s", e)
-        return entries, errors
+    config_data, config_label, config_errors = _load_config(config, ledger_dir)
+    if config_errors:
+        return entries, config_errors
 
     # Extract schema sections, compiling regex patterns and allowed_values once
     metadata_section = config_data.get("metadata", {})
@@ -295,7 +403,7 @@ def check_valid_metadata(
             if isinstance(spec, dict) and "account_pattern" in spec:
                 schema_errors.append(
                     ParserError(
-                        source={"filename": str(config_path), "lineno": 0},
+                        source={"filename": config_label, "lineno": 0},
                         message=(
                             f"account_pattern is not valid on '{dtype}' metadata "
                             f"'{key}': account_pattern only applies to "

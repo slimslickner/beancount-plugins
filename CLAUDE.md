@@ -10,7 +10,7 @@ This is a Python package providing custom plugins for **Beancount**, a text-base
 2. **check_missing_tags** - Validates that transactions have required tags based on account configuration
 3. **check_missing_links** - Validates that transactions posting to link-required accounts include at least one link (via `link-expected: True` on Open directives)
 4. **check_valid_tags** - Validates transaction tags against an allowed whitelist, and errors on declared-but-unused tags (opt out per tag with `allow_unused: true`). Config is dual-mode: a `tags.yaml` path or an inline dict literal.
-5. **check_valid_metadata** - Validates metadata keys and values against a typed schema, and errors on declared-but-unused schema keys
+5. **check_valid_metadata** - Validates metadata keys and values against a typed schema, and errors on declared-but-unused schema keys. Config is dual-mode: a `metadata_schema.yaml` path or an inline dict literal (better for small schemas; a file is better for large ones).
 6. **posting_tags** - Enables per-posting tag granularity via 'tags' metadata on postings
 7. **transfer_remove_payee** - Errors on transfer-shaped transactions (Assets/Liabilities/Equity only) that incorrectly carry a payee — excludes `Assets:Receivable:` and same-parent transfers
 8. **missing_contribution_year** - Errors on retirement contributions whose receiving posting lacks a `contribution-year` metadata key; requires a "destination + counterparty" pair to qualify so random asset movements don't trip it
@@ -79,7 +79,7 @@ All three commands must complete with zero errors before committing changes. If 
   - Dual-mode config: inline Python dict literal (`{ 'tags': {...} }`) OR a `tags.yaml` file path (defaults to `tags.yaml` in the ledger directory)
 - **`beancount_plugins/check_valid_metadata.py`** - Metadata schema validation plugin
   - Key function: `check_valid_metadata()` - main plugin entry point
-  - Requires `metadata_schema.yaml` configuration file
+  - Dual-mode config: inline Python dict literal (`{ 'metadata': {...} }`) OR a `metadata_schema.yaml` file path (defaults to `metadata_schema.yaml` in the ledger directory)
 - **`beancount_plugins/posting_tags.py`** - Per-posting tags plugin
   - Key function: `posting_tags()` - main plugin entry point
 - **`beancount_plugins/transfer_remove_payee.py`** - Transfer-payee guard plugin
@@ -150,7 +150,7 @@ pytest tests/
 - Reports ParserErrors for undefined tags and missing links
 
 ### For check_valid_metadata
-- Reads metadata schema from `metadata_schema.yaml` configuration file
+- Reads metadata schema from config: by default `metadata_schema.yaml`, but the second plugin argument may instead be an inline Python dict literal (detected when it starts with `{`); the inline dict mirrors the file shape and requires a top-level `metadata` key
 - Validates metadata keys and values against typed schema
 - Supports type constraints (string, int, bool, date, Decimal)
 - Supports required fields and allowed_values constraints
@@ -208,7 +208,7 @@ pytest tests/
 Some plugins require configuration files:
 
 - **`tags.yaml`** - Default config for `check_valid_tags` (which can alternatively take the tags dict inline)
-- **`metadata_schema.yaml`** - Required by `check_valid_metadata` plugin
+- **`metadata_schema.yaml`** - Default config for `check_valid_metadata` (which can alternatively take the schema dict inline)
 
 Other plugins accept an optional inline Python-dict literal as a second argument to `plugin ...`, parsed via `ast.literal_eval` (single or double quotes, string or list values):
 
@@ -216,6 +216,7 @@ Other plugins accept an optional inline Python-dict literal as a second argument
 - **`missing_contribution_year`** — `{'destination_accounts': [...], 'destination_patterns': [...], 'counterparty_accounts': [...]}`
 - **`aggregate_account_metadata`** — `{'aggregations': {'asset-class': {'source': 'account-type', 'maps': {'taxable': ['checking', 'savings']}}}}`
 - **`check_valid_tags`** — dual-mode: either a `tags.yaml` path or an inline `{'tags': {'travel': {'label': 'Travel'}, 'reimbursable': {'require_link': True}}}`
+- **`check_valid_metadata`** — dual-mode: either a `metadata_schema.yaml` path or an inline `{'metadata': {'posting': {'tag': {'type': 'string', 'allowed_values': ['personal', 'business']}}}}`
 
 The remaining plugins take no config: `block_transactions` opts in per account via `block-transactions: TRUE` on its Open directive, while `posting_tags`, `transfer_remove_payee`, and `implicit_prices_flagged` are configured per posting or not at all.
 
