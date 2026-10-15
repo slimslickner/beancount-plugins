@@ -8,7 +8,8 @@ so a file-based config can be pasted inline into a ledger.
 
 The YAML is loaded with ``yaml.safe_load`` and re-serialized as a Python literal
 (``True``/``False``, single-quoted strings) that the plugins can parse with
-``ast.literal_eval``.
+``ast.literal_eval``. Output is fully expanded: every mapping and list is
+rendered with one entry per indented line, recursively.
 
 USAGE:
     python scripts/yaml_to_plugin.py tags.yaml
@@ -57,15 +58,12 @@ def _normalize(value: Any) -> Any:
     return value
 
 
-def _is_scalar(value: Any) -> bool:
-    return isinstance(value, (str, int, float, bool)) or value is None
-
-
 def _to_literal(value: Any, level: int = 0) -> str:
     """Render a value as an indented Python literal.
 
-    Mappings and lists whose members are all scalars stay on one line; nested
-    containers are broken across multiple indented lines.
+    Every non-empty mapping and list is broken across multiple indented lines,
+    one entry per line, recursively, so no two keys ever share a line. Empty
+    containers render inline as ``{}`` / ``[]``.
     """
     indent = _INDENT * level
     child_indent = _INDENT * (level + 1)
@@ -73,15 +71,10 @@ def _to_literal(value: Any, level: int = 0) -> str:
     if isinstance(value, dict):
         if not value:
             return "{}"
-        if all(_is_scalar(v) for v in value.values()):
-            entries = ", ".join(
-                f"{_to_literal(k)}: {_to_literal(v)}" for k, v in value.items()
-            )
-            return f"{{{entries}}}"
         lines = ["{"]
-        for k, v in value.items():
+        for key, item in value.items():
             lines.append(
-                f"{child_indent}{_to_literal(k)}: {_to_literal(v, level + 1)},"
+                f"{child_indent}{_to_literal(key)}: {_to_literal(item, level + 1)},"
             )
         lines.append(f"{indent}}}")
         return "\n".join(lines)
@@ -89,11 +82,9 @@ def _to_literal(value: Any, level: int = 0) -> str:
     if isinstance(value, list):
         if not value:
             return "[]"
-        if all(_is_scalar(v) for v in value):
-            return "[" + ", ".join(_to_literal(v) for v in value) + "]"
         lines = ["["]
-        for v in value:
-            lines.append(f"{child_indent}{_to_literal(v, level + 1)},")
+        for item in value:
+            lines.append(f"{child_indent}{_to_literal(item, level + 1)},")
         lines.append(f"{indent}]")
         return "\n".join(lines)
 
