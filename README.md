@@ -7,7 +7,7 @@ Personal helper plugins for the Beancount finance ledger. These plugins are desi
 1. **zerosum_transaction_matcher** - Identifies and matches transfer postings between accounts, adding metadata for transfer reconciliation
 2. **check_missing_tags** - Validates that transactions posting to tag-required accounts include tags
 3. **check_missing_links** - Validates that transactions posting to link-required accounts include a link
-4. **check_valid_tags** - Validates transaction tags against an allowed whitelist (requires `tags.yaml`)
+4. **check_valid_tags** - Validates transaction tags against an allowed whitelist and errors on declared-but-unused tags (dormant tags can opt out via `allow_unused: true`). Requires `tags.yaml`
 5. **check_valid_metadata** - Validates metadata keys and values against a typed schema, with optional `account_pattern` scoping (fields only allowed on matching accounts; required there when required) and errors on declared-but-unused schema keys. Requires `metadata_schema.yaml`
 6. **posting_tags** - Enables per-posting tags via `tags` metadata, promoting them to the transaction level for Fava/bean-query visibility
 7. **transfer_remove_payee** - Errors on transactions that look like transfers (Assets/Liabilities/Equity only) but incorrectly carry a payee

@@ -30,6 +30,8 @@ INCLUDED PLUGINS:
    - Validates transaction tags against an allowed whitelist
    - Loads allowed tags from tags.yaml configuration
    - Reports violations for unknown tags
+   - Reports declared-but-unused tags as errors (dead config)
+   - Dormant tags opt out with `allow_unused: true` on the tag definition
    - Prevents typos and enforces controlled vocabulary
    Usage: plugin "beancount_plugins.check_valid_tags"
 
