@@ -9,7 +9,7 @@ This is a Python package providing custom plugins for **Beancount**, a text-base
 1. **zerosum_transaction_matcher** - Automatically matches and enriches transfer postings between accounts with metadata
 2. **check_missing_tags** - Validates that transactions have required tags based on account configuration
 3. **check_missing_links** - Validates that transactions posting to link-required accounts include at least one link (via `link-expected: True` on Open directives)
-4. **check_valid_tags** - Validates transaction tags against an allowed whitelist, and errors on declared-but-unused tags (opt out per tag with `allow_unused: true`)
+4. **check_valid_tags** - Validates transaction tags against an allowed whitelist, and errors on declared-but-unused tags (opt out per tag with `allow_unused: true`). Config is dual-mode: a `tags.yaml` path or an inline dict literal.
 5. **check_valid_metadata** - Validates metadata keys and values against a typed schema, and errors on declared-but-unused schema keys
 6. **posting_tags** - Enables per-posting tag granularity via 'tags' metadata on postings
 7. **transfer_remove_payee** - Errors on transfer-shaped transactions (Assets/Liabilities/Equity only) that incorrectly carry a payee — excludes `Assets:Receivable:` and same-parent transfers
@@ -76,7 +76,7 @@ All three commands must complete with zero errors before committing changes. If 
   - Sibling of `check_missing_tags`; same shape, different key
 - **`beancount_plugins/check_valid_tags.py`** - Tag whitelist validation plugin
   - Key function: `check_valid_tags()` - main plugin entry point
-  - Requires `tags.yaml` configuration file
+  - Dual-mode config: inline Python dict literal (`{ 'tags': {...} }`) OR a `tags.yaml` file path (defaults to `tags.yaml` in the ledger directory)
 - **`beancount_plugins/check_valid_metadata.py`** - Metadata schema validation plugin
   - Key function: `check_valid_metadata()` - main plugin entry point
   - Requires `metadata_schema.yaml` configuration file
@@ -143,7 +143,7 @@ pytest tests/
 - Sibling of `check_missing_tags`; identical shape, different metadata key
 
 ### For check_valid_tags
-- Reads allowed tags from `tags.yaml` configuration file
+- Reads allowed tags from config: by default `tags.yaml`, but the second plugin argument may instead be an inline Python dict literal (detected when it starts with `{`); the inline dict mirrors the file shape and requires a top-level `tags` key
 - Validates all transaction tags against whitelist
 - Supports `require_link` per tag (transactions with that tag must have a link)
 - Errors on declared-but-unused tags: every tag in `tags.yaml` must appear on at least one transaction. Posting-level tags promoted by `posting_tags` count provided it loads first. Genuinely dormant tags opt out with `allow_unused: true` on the tag definition (independent of `require_link`). This is unconditional otherwise, so a config loaded against a ledger with no tagged transactions reports every declared tag without `allow_unused`
@@ -207,7 +207,7 @@ pytest tests/
 
 Some plugins require configuration files:
 
-- **`tags.yaml`** - Required by `check_valid_tags` plugin
+- **`tags.yaml`** - Default config for `check_valid_tags` (which can alternatively take the tags dict inline)
 - **`metadata_schema.yaml`** - Required by `check_valid_metadata` plugin
 
 Other plugins accept an optional inline Python-dict literal as a second argument to `plugin ...`, parsed via `ast.literal_eval` (single or double quotes, string or list values):
@@ -215,6 +215,7 @@ Other plugins accept an optional inline Python-dict literal as a second argument
 - **`promote_account_metadata`** — `{'whitelist': 'tax-treatment'}` or `{'blacklist': ['tag-expected', 'link-expected']}`
 - **`missing_contribution_year`** — `{'destination_accounts': [...], 'destination_patterns': [...], 'counterparty_accounts': [...]}`
 - **`aggregate_account_metadata`** — `{'aggregations': {'asset-class': {'source': 'account-type', 'maps': {'taxable': ['checking', 'savings']}}}}`
+- **`check_valid_tags`** — dual-mode: either a `tags.yaml` path or an inline `{'tags': {'travel': {'label': 'Travel'}, 'reimbursable': {'require_link': True}}}`
 
 The remaining plugins take no config: `block_transactions` opts in per account via `block-transactions: TRUE` on its Open directive, while `posting_tags`, `transfer_remove_payee`, and `implicit_prices_flagged` are configured per posting or not at all.
 

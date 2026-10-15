@@ -18,8 +18,29 @@ USAGE:
 In your main ledger file:
     plugin "beancount_plugins.check_valid_tags"
 
-Optional config (specify alternate config file):
+Optional config. The second argument is dual-mode: it may be a path to a
+tags.yaml file, OR an inline Python dict literal mirroring the file's shape.
+The mode is chosen by a simple rule — if the argument (after stripping
+whitespace) starts with '{', it is parsed as an inline dict; otherwise it is
+treated as a file path.
+
+Alternate config file:
     plugin "beancount_plugins.check_valid_tags" "/path/to/tags.yaml"
+
+Inline config (Python dict literal, top-level 'tags' key required):
+    plugin "beancount_plugins.check_valid_tags" "{
+        'tags': {
+            'travel': {'label': 'Travel'},
+            'reimbursable': {'label': 'Be reimbursed', 'require_link': True}
+        }
+    }"
+
+The inline dict uses Python literal syntax (parsed via ast.literal_eval):
+single or double quotes, and booleans as True/False — not YAML/JSON's
+true/false.
+
+DEFAULT:
+When no config is given, tags.yaml is loaded from the ledger file's directory.
 
 CONFIG FILE FORMAT:
 Create a tags.yaml file in your ledger directory with:
@@ -87,8 +108,10 @@ COMPLEMENTARY PLUGINS:
 __copyright__ = "Copyright (C) 2026 slimslickner"
 __license__ = "GNU GPLv2"
 
+import ast
 import logging
 from pathlib import Path
+from typing import Any
 
 import yaml
 from beancount.core import data
@@ -97,6 +120,107 @@ from beancount.parser.parser import ParserError
 logger = logging.getLogger(__name__)
 
 __plugins__ = ("check_valid_tags",)
+
+# ParserError source used for config-level problems (no offending directive).
+_CONFIG_SOURCE: dict[str, Any] = {"filename": "plugin config", "lineno": 0}
+
+
+def _load_config(
+    config: str | None,
+    ledger_dir: Path,
+) -> tuple[dict[str, Any], list[ParserError]]:
+    """Load tags configuration from either an inline dict or a YAML file path.
+
+    The second plugin argument is dual-mode: if it starts with '{' it is parsed
+    as an inline Python dict literal; otherwise it is treated as a path to a
+    tags.yaml file (resolved relative to the ledger directory when relative).
+    When no config is supplied, tags.yaml is loaded from the ledger directory.
+
+    Returns (config_data, errors). On error config_data is an empty dict and the
+    caller should return the entries unchanged.
+    """
+    errors: list[ParserError] = []
+
+    if config and config.strip().startswith("{"):
+        try:
+            parsed: Any = ast.literal_eval(config)
+        except (ValueError, SyntaxError) as e:
+            errors.append(
+                ParserError(
+                    source=dict(_CONFIG_SOURCE),
+                    message=(
+                        f"check_valid_tags: Invalid inline config: {e}. "
+                        "Use Python literal syntax (single or double quotes, "
+                        "True/False — not YAML/JSON true/false)."
+                    ),
+                    entry=None,
+                )
+            )
+            return {}, errors
+
+        if not isinstance(parsed, dict):
+            errors.append(
+                ParserError(
+                    source=dict(_CONFIG_SOURCE),
+                    message=(
+                        "check_valid_tags: config must be a dict, "
+                        f"got {type(parsed).__name__}"
+                    ),
+                    entry=None,
+                )
+            )
+            return {}, errors
+
+        tags_section = parsed.get("tags")
+        if tags_section is not None and not isinstance(tags_section, dict):
+            errors.append(
+                ParserError(
+                    source=dict(_CONFIG_SOURCE),
+                    message=(
+                        "check_valid_tags: 'tags' must be a dict mapping tag "
+                        f"names to specs, got {type(tags_section).__name__}"
+                    ),
+                    entry=None,
+                )
+            )
+            return {}, errors
+
+        return parsed, errors
+
+    # File-path mode (default or explicit).
+    if config:
+        config_path = Path(config)
+        if not config_path.is_absolute():
+            config_path = ledger_dir / config_path
+    else:
+        config_path = ledger_dir / "tags.yaml"
+
+    if not config_path.exists():
+        errors.append(
+            ParserError(
+                source={"filename": "tags.yaml", "lineno": 0},
+                message=f"Tags configuration file not found: {config_path}",
+                entry=None,
+            )
+        )
+        logger.warning("Tags configuration file not found: %s", config_path)
+        return {}, errors
+
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            config_data = yaml.safe_load(f) or {}
+    except Exception as e:
+        errors.append(
+            ParserError(
+                source={"filename": str(config_path), "lineno": 0},
+                message=f"Failed to load tags configuration: {e}",
+                entry=None,
+            )
+        )
+        logger.error("Failed to load tags configuration: %s", e)
+        return {}, errors
+
+    return config_data, errors
 
 
 def check_valid_tags(
@@ -109,45 +233,20 @@ def check_valid_tags(
     Args:
         entries: List of beancount entries
         options_map: Beancount options map
-        config: Optional config path (defaults to tags.yaml in ledger directory)
+        config: Optional dual-mode config — an inline Python dict literal (must
+            start with '{' and carry a top-level 'tags' key) or a path to a
+            tags.yaml file. Defaults to tags.yaml in the ledger directory.
 
     Returns:
         Tuple of (entries_unchanged, errors)
     """
     errors: list[ParserError] = []
 
-    # Determine config file path, resolved relative to the ledger file's directory.
+    # Load configuration: inline dict literal or tags.yaml file path.
     ledger_dir = Path(options_map.get("filename", "")).parent
-    if config:
-        config_path = Path(config)
-        if not config_path.is_absolute():
-            config_path = ledger_dir / config_path
-    else:
-        config_path = ledger_dir / "tags.yaml"
-
-    # Load configuration
-    if not config_path.exists():
-        error = ParserError(
-            source={"filename": "tags.yaml", "lineno": 0},
-            message=f"Tags configuration file not found: {config_path}",
-            entry=None,
-        )
-        errors.append(error)
-        logger.warning("Tags configuration file not found: %s", config_path)
-        return entries, errors
-
-    try:
-        with open(config_path, encoding="utf-8") as f:
-            config_data = yaml.safe_load(f) or {}
-    except Exception as e:
-        error = ParserError(
-            source={"filename": str(config_path), "lineno": 0},
-            message=f"Failed to load tags configuration: {e}",
-            entry=None,
-        )
-        errors.append(error)
-        logger.error("Failed to load tags configuration: %s", e)
-        return entries, errors
+    config_data, config_errors = _load_config(config, ledger_dir)
+    if config_errors:
+        return entries, config_errors
 
     # Extract allowed tags and link requirements
     allowed_tags: set[str] = set()
