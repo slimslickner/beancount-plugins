@@ -152,6 +152,129 @@ def test_check_valid_tags_missing_config(tmp_path):
     assert any("not found" in e.message for e in errors)
 
 
+class TestUnusedTags:
+    """Declared-but-unused tags are reported as errors."""
+
+    def _load(self, tmp_path, tags_body, ledger_body=""):
+        config = tmp_path / "tags.yaml"
+        config.write_text(tags_body)
+        ledger = tmp_path / "test.beancount"
+        ledger.write_text(
+            'option "title" "Unused tag test"\n'
+            'option "operating_currency" "USD"\n'
+            'plugin "beancount_plugins.check_valid_tags" "tags.yaml"\n'
+            "\n" + ledger_body
+        )
+        _, errors, _ = loader.load_file(str(ledger))
+        return [e.message for e in errors]
+
+    def test_unused_tag_errors(self, tmp_path):
+        """A declared tag that never appears is flagged as unused."""
+        messages = self._load(
+            tmp_path,
+            'tags:\n  never_used:\n    label: "Never used"\n',
+        )
+        assert any(
+            "check_valid_tags: Declared tag '#never_used' is never used" in m
+            for m in messages
+        )
+
+    def test_used_tag_passes(self, tmp_path):
+        """A declared tag that appears on a transaction is not flagged."""
+        messages = self._load(
+            tmp_path,
+            'tags:\n  used_tag:\n    label: "Used"\n',
+            '2024-01-01 * "x" #used_tag\n'
+            "    Expenses:Travel  1.00 USD\n"
+            "    Assets:Checking  -1.00 USD\n",
+        )
+        assert not any("never used" in m for m in messages)
+
+    def test_allow_unused_tag_passes(self, tmp_path):
+        """A dormant tag opted out with allow_unused is not flagged."""
+        messages = self._load(
+            tmp_path,
+            'tags:\n  pending:\n    label: "Awaiting settlement"\n'
+            "    allow_unused: true\n",
+        )
+        assert not any("never used" in m for m in messages)
+
+    def test_allow_unused_require_link_tag_passes(self, tmp_path):
+        """allow_unused exempts a dormant tag even when it requires a link."""
+        messages = self._load(
+            tmp_path,
+            'tags:\n  pending:\n    label: "Awaiting settlement"\n'
+            "    require_link: true\n"
+            "    allow_unused: true\n",
+        )
+        assert not any("never used" in m for m in messages)
+
+    def test_allow_unused_false_still_flagged(self, tmp_path):
+        """An explicit allow_unused: false does not exempt the tag."""
+        messages = self._load(
+            tmp_path,
+            'tags:\n  never_used:\n    label: "Never used"\n    allow_unused: false\n',
+        )
+        assert any(
+            "check_valid_tags: Declared tag '#never_used' is never used" in m
+            for m in messages
+        )
+
+    def test_unused_require_link_tag_errors(self, tmp_path):
+        """A require_link tag that never appears is still flagged as unused."""
+        messages = self._load(
+            tmp_path,
+            'tags:\n  never_used:\n    label: "Never used"\n    require_link: true\n',
+        )
+        assert any(
+            "check_valid_tags: Declared tag '#never_used' is never used" in m
+            for m in messages
+        )
+
+    def test_used_require_link_tag_passes(self, tmp_path):
+        """A used require_link tag (with a link) is not flagged as unused."""
+        messages = self._load(
+            tmp_path,
+            'tags:\n  used_tag:\n    label: "Used"\n    require_link: true\n',
+            '2024-01-01 * "x" #used_tag ^receipt-1\n'
+            "    Expenses:Travel  1.00 USD\n"
+            "    Assets:Checking  -1.00 USD\n",
+        )
+        assert not any("never used" in m for m in messages)
+
+    def test_undefined_tag_does_not_satisfy_usage(self, tmp_path):
+        """An undeclared tag in the ledger does not mark a declared tag used."""
+        messages = self._load(
+            tmp_path,
+            'tags:\n  declared_tag:\n    label: "Declared"\n',
+            '2024-01-01 * "x" #other_tag\n'
+            "    Expenses:Travel  1.00 USD\n"
+            "    Assets:Checking  -1.00 USD\n",
+        )
+        assert any(
+            "check_valid_tags: Declared tag '#declared_tag' is never used" in m
+            for m in messages
+        )
+        assert any("Undefined tag '#other_tag'" in m for m in messages)
+
+    def test_unused_tag_anchored_to_ledger_file(self, tmp_path):
+        """The error points at the ledger file (line 0), not the config file."""
+        config = tmp_path / "tags.yaml"
+        config.write_text('tags:\n  never_used:\n    label: "Never used"\n')
+        ledger = tmp_path / "test.beancount"
+        ledger.write_text(
+            'option "title" "Anchor test"\n'
+            'option "operating_currency" "USD"\n'
+            'plugin "beancount_plugins.check_valid_tags" "tags.yaml"\n'
+            "\n"
+        )
+        _, errors, _ = loader.load_file(str(ledger))
+        unused = [e for e in errors if "never used" in e.message]
+        assert unused
+        assert unused[0].source["filename"] == str(ledger)
+        assert unused[0].source["lineno"] == 0
+
+
 # ---------------------------------------------------------------------------
 # check_valid_metadata plugin
 # ---------------------------------------------------------------------------
