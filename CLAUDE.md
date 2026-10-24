@@ -199,6 +199,7 @@ pytest tests/
 ### For aggregate_account_metadata
 - Requires an inline Python-dict config with an `aggregations` map; one config can declare several derived keys at once
 - Each aggregation names a derived key, a `source` metadata key, an optional `mode` (`'strict'` default, or `'default'` with a required `default` fallback), and a `maps` dict of aggregated value → list of source values
+- Aggregated values and `default` may be a **string or a bool**; source values are always strings
 - Open-directive-only: reads the source key from the Open and writes the derived key back onto the same Open
 - Existing derived keys win on conflict; a WARNING is logged (visible with `bean-check -v`)
 - Load *before* `promote_account_metadata` to flow derived keys down to postings, and *before* `check_valid_metadata` with the derived keys present in the schema's `open:` section

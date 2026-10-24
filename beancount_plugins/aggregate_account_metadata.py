@@ -50,11 +50,11 @@ Per aggregation spec:
       `maps`, otherwise a ParserError is emitted at that Open's file/line.
     - 'default': a `default` must be provided; source values not listed in
       `maps` are mapped to `default` (no error).
-- default: (string) the fallback derived value. REQUIRED when mode is
+- default: (string or bool) the fallback derived value. REQUIRED when mode is
   'default'; disallowed when mode is 'strict'.
-- maps: (dict, required, non-empty) maps an aggregated value (string) to a
-  list of source values (strings). A source value may not appear in more than
-  one aggregated value's list within the same aggregation.
+- maps: (dict, required, non-empty) maps an aggregated value (string or bool)
+  to a list of source values (strings). A source value may not appear in more
+  than one aggregated value's list within the same aggregation.
 
 COVERAGE CHECKS (per aggregation):
 - Uncovered source value: in 'strict' mode, an observed source value that is
@@ -77,6 +77,21 @@ EXAMPLE:
 
       account-type: "checking"
       asset-class: "taxable"
+
+A derived value may also be a boolean:
+
+    plugin "beancount_plugins.aggregate_account_metadata" "{
+        'aggregations': {
+            'taxable': {
+                'source': 'account-type',
+                'mode': 'strict',
+                'maps': {
+                    True:  ['checking', 'savings', 'brokerage'],
+                    False: ['ira', '401k', 'mortgage']
+                }
+            }
+        }
+    }"
 
 PLUGIN LOAD ORDER:
 - Load BEFORE promote_account_metadata so derived keys flow down to postings.
@@ -108,6 +123,10 @@ _DEFAULT_MODE: str = "strict"
 
 _CONFIG_SOURCE: dict[str, Any] = {"filename": "plugin config", "lineno": 0}
 
+# Derived metadata values written onto Open directives. Source values are always
+# strings; the derived (aggregated) value may be a string or a boolean.
+MetadataValue = str | bool
+
 
 @dataclass
 class AggregationSpec:
@@ -116,8 +135,8 @@ class AggregationSpec:
     key: str
     source: str
     mode: str
-    default: str | None
-    value_map: dict[str, str]
+    default: MetadataValue | None
+    value_map: dict[str, MetadataValue]
     declared_values: frozenset[str]
 
 
@@ -235,16 +254,18 @@ def _parse_aggregation(
         )
         return None
 
-    value_map: dict[str, str] = {}
+    value_map: dict[str, MetadataValue] = {}
     overlaps: set[str] = set()
     for agg_value, raw_source_values in raw_maps.items():
-        if not isinstance(agg_value, str) or not agg_value:
+        if not isinstance(agg_value, (str, bool)) or (
+            isinstance(agg_value, str) and not agg_value
+        ):
             errors.append(
                 ParserError(
                     source=dict(_CONFIG_SOURCE),
                     message=(
                         f"aggregate_account_metadata: aggregation '{key}' has a "
-                        f"non-string or empty aggregated value"
+                        f"non-string/bool or empty aggregated value"
                     ),
                     entry=None,
                 )
@@ -294,13 +315,15 @@ def _parse_aggregation(
             return None
         default = None
     else:  # mode == "default"
-        if not isinstance(default, str) or not default:
+        if not isinstance(default, (str, bool)) or (
+            isinstance(default, str) and not default
+        ):
             errors.append(
                 ParserError(
                     source=dict(_CONFIG_SOURCE),
                     message=(
                         f"aggregate_account_metadata: aggregation '{key}' with mode "
-                        f"'default' requires a non-empty 'default' string"
+                        f"'default' requires a non-empty 'default' string or bool"
                     ),
                     entry=None,
                 )
