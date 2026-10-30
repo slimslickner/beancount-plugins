@@ -182,9 +182,10 @@ See individual plugin modules for detailed configuration options and examples:
 - aggregate_account_metadata: inline dict with an `aggregations` map. Each
   aggregation names a derived key, its `source` metadata key, an optional
   `mode` ('strict' default, or 'default' with a required `default` fallback),
-  and a `maps` dict of aggregated value -> list of source values. Strict mode
-  errors on unmapped values; both modes error on declared-but-never-used
-  source values. Load before promote_account_metadata.
+  and a `maps` dict of aggregated value -> list of source values. Aggregated
+  values and `default` may be a string or a bool; source values are strings.
+  Strict mode errors on unmapped values; both modes error on
+  declared-but-never-used source values. Load before promote_account_metadata.
 - implicit_prices_flagged: no config; opt out per-posting with
   `no-implicit-price: TRUE` metadata on the posting you want to skip
 - check_valid_tags requires: tags.yaml

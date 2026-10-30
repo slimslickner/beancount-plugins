@@ -105,6 +105,61 @@ def test_parse_config_default_mode():
     assert specs[0].default == "other"
 
 
+def test_parse_config_bool_map_value():
+    specs, errors = _parse_config(
+        "{'aggregations': {'x': {'source': 't', "
+        "'maps': {True: ['checking'], False: ['401k']}}}}"
+    )
+    assert errors == []
+    assert specs[0].value_map == {"checking": True, "401k": False}
+
+
+def test_parse_config_bool_default():
+    specs, errors = _parse_config(
+        "{'aggregations': {'x': {'source': 't', 'mode': 'default', "
+        "'default': True, 'maps': {'a': ['p']}}}}"
+    )
+    assert errors == []
+    assert specs[0].default is True
+
+
+def test_parse_config_false_default_allowed():
+    specs, errors = _parse_config(
+        "{'aggregations': {'x': {'source': 't', 'mode': 'default', "
+        "'default': False, 'maps': {'a': ['p']}}}}"
+    )
+    assert errors == []
+    assert specs[0].default is False
+
+
+def test_parse_config_int_map_value_rejected():
+    specs, errors = _parse_config(
+        "{'aggregations': {'x': {'source': 't', 'maps': {1: ['p']}}}}"
+    )
+    assert specs == []
+    assert len(errors) == 1
+    assert "non-string/bool or empty" in errors[0].message
+
+
+def test_parse_config_none_map_value_rejected():
+    specs, errors = _parse_config(
+        "{'aggregations': {'x': {'source': 't', 'maps': {None: ['p']}}}}"
+    )
+    assert specs == []
+    assert len(errors) == 1
+    assert "non-string/bool or empty" in errors[0].message
+
+
+def test_parse_config_int_default_rejected():
+    specs, errors = _parse_config(
+        "{'aggregations': {'x': {'source': 't', 'mode': 'default', "
+        "'default': 3, 'maps': {'a': ['p']}}}}"
+    )
+    assert specs == []
+    assert len(errors) == 1
+    assert "requires a non-empty 'default'" in errors[0].message
+
+
 def test_parse_config_invalid_syntax():
     specs, errors = _parse_config("not valid python")
     assert specs == []
@@ -305,6 +360,41 @@ class TestBasic:
         )
         entries, _, _ = _load(config, body)
         assert "asset-class" not in (_find_open(entries, "Assets:Other").meta or {})
+
+
+class TestBoolOutput:
+    def test_bool_derived_values_written(self):
+        body = """
+2026-01-01 open Assets:Checking USD
+  account-type: "checking"
+2026-01-01 open Assets:Retirement USD
+  account-type: "401k"
+"""
+        config = (
+            "{'aggregations': {'taxable': {'source': 'account-type', "
+            "'maps': {True: ['checking'], False: ['401k']}}}}"
+        )
+        entries, errors, _ = _load(config, body)
+        assert _plugin_errors(errors) == []
+        assert _find_open(entries, "Assets:Checking").meta["taxable"] is True
+        assert _find_open(entries, "Assets:Retirement").meta["taxable"] is False
+
+    def test_false_default_written(self):
+        body = """
+2026-01-01 open Assets:Checking USD
+  account-type: "checking"
+2026-01-01 open Assets:Cash USD
+  account-type: "savings"
+"""
+        config = (
+            "{'aggregations': {'taxable': {'source': 'account-type', "
+            "'mode': 'default', 'default': False, "
+            "'maps': {True: ['checking']}}}}"
+        )
+        entries, errors, _ = _load(config, body)
+        assert _plugin_errors(errors) == []
+        assert _find_open(entries, "Assets:Checking").meta["taxable"] is True
+        assert _find_open(entries, "Assets:Cash").meta["taxable"] is False
 
 
 class TestDefaultMode:
